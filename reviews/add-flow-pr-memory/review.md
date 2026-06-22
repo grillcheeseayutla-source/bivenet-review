@@ -33,8 +33,8 @@ CLAUDE.md                       |  39 ++++
  docs/POLITICA_DEPLOY.md         |  27 +++
  package.json                    |  10 +-
  scripts/flow.js                 | 214 -------------------
- scripts/flow.mjs                | 463 ++++++++++++++++++++++++++++++++++++++++
- 8 files changed, 583 insertions(+), 218 deletions(-)
+ scripts/flow.mjs                | 462 ++++++++++++++++++++++++++++++++++++++++
+ 8 files changed, 582 insertions(+), 218 deletions(-)
 ```
 
 ## Impacto detectado

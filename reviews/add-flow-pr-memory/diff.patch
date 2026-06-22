@@ -390,10 +390,10 @@ index 1baab69..0000000
 -}
 diff --git a/scripts/flow.mjs b/scripts/flow.mjs
 new file mode 100644
-index 0000000..b34b655
+index 0000000..2547bee
 --- /dev/null
 +++ b/scripts/flow.mjs
-@@ -0,0 +1,463 @@
+@@ -0,0 +1,462 @@
 +import { execSync } from 'child_process';
 +import process from 'process';
 +
@@ -804,21 +804,20 @@ index 0000000..b34b655
 +      runCmd(`cd ${tempRepoDir} && git add reviews/${arg}/ && git commit -m "review: ${arg}" && git push origin main`);
 +    }
 +
-+    console.log(`\n✅ Paquete de revisión publicado.
++    const repoOwner = REVIEW_REPO.split('/')[0];
++    const repoName = REVIEW_REPO.split('/')[1];
 +
-+Repo:
-+https://github.com/${REVIEW_REPO}
++    console.log(`\n✅ Paquete de revisión publicado vía GitHub Pages.
 +
-+Ruta:
-+reviews/${arg}/
++URL DIRECTA PARA CLAUDE:
++https://${repoOwner}.github.io/${repoName}/reviews/${arg}/diff.patch
 +
-+Archivos:
-+- review.md
-+- files.txt
-+- diff.patch
++Archivos adicionales disponibles:
++- https://${repoOwner}.github.io/${repoName}/reviews/${arg}/review.md
++- https://${repoOwner}.github.io/${repoName}/reviews/${arg}/files.txt
 +
 +Instrucción para Claude Project:
-+Sincroniza Project Knowledge del repo bivenet-review y revisa reviews/${arg}/review.md y diff.patch.`);
++"Por favor, lee el diff completo de mi tarea accediendo a esta URL: https://${repoOwner}.github.io/${repoName}/reviews/${arg}/diff.patch y entrégame tu auditoría (APROBADO PARA RELEASE o NO APROBADO)."`);
 +
 +    // Cleanup
 +    fs.rmSync(tempWorkDir, { recursive: true, force: true });
