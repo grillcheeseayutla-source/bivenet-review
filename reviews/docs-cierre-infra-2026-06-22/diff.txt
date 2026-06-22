@@ -1,0 +1,113 @@
+diff --git a/docs/bitacora/2026-06-22-infra-git-rsync.md b/docs/bitacora/2026-06-22-infra-git-rsync.md
+new file mode 100644
+index 0000000..cf0bec5
+--- /dev/null
++++ b/docs/bitacora/2026-06-22-infra-git-rsync.md
+@@ -0,0 +1,56 @@
++# Bitácora de Infraestructura: 2026-06-22 (Git + Rsync)
++
++## 1. Contexto inicial
++- Claude (el Arquitecto) no podía leer los cambios directamente de las ramas privadas.
++- El VPS no tenía un directorio estructurado como `/home/soyrico699/next-js-supabase-starter`.
++- Los servicios reales estaban aislados en:
++  - `/home/soyrico699/provision-agent-v2`
++  - `/home/soyrico699/wsp-agent-v2`
++
++## 2. Solución adoptada
++- Se implementó un repositorio público `bivenet-review` exclusivamente para publicar paquetes temporales de auditoría.
++- Se configuró GitHub Pages en ese repo para servir los archivos `diff.txt`, `review.md` y `files.txt` públicamente.
++- Se configuró un clon de apoyo en el VPS, actuando como puente:
++  - `/home/soyrico699/bivenet-source`
++- El despliegue de backend ahora se orquesta mediante:
++  - `git pull` en `bivenet-source`.
++  - `rsync` hacia las carpetas vivas de los agentes, excluyendo archivos sensibles.
++  - Reinicio selectivo con `systemd` únicamente para los servicios afectados.
++
++## 3. Flujo aprobado
++La secuencia operativa validada es:
++1. `npm run flow:save`
++2. `npm run flow:plan`
++3. `npm run flow:review-repo`
++4. Auditoría del Arquitecto (lectura del diff público)
++5. Autorización explícita de Isaac
++6. `npm run flow:release`
++7. `npm run flow:review-clean`
++
++## 4. Releases y pruebas realizadas
++- Se ejecutaron las pruebas exitosas `test-rsync-deploy` e `infra-hardening-rsync-flow`.
++- Se confirmó que `provision-agent-v2` quedó activo y estable.
++- Se confirmó que `wsp-agent-v2` **no fue tocado** ni reiniciado durante estos releases, demostrando la precisión del flujo.
++- Se confirmó que Vercel (Next.js) **no fue tocado** por los comandos `flow`.
++
++## 5. Reglas operativas nuevas
++- **PROHIBIDO** ejecutar `flow:release` sin autorización explícita de Isaac.
++- **PROHIBIDO** ejecutar `chown -R` ni realizar cambios globales de permisos en el VPS sin autorización.
++- **PROHIBIDO** reiniciar servicios que no fueron afectados por la tarea.
++- **PROHIBIDO** tocar `wsp-agent-v2` si la tarea actual no altera esa carpeta.
++- **PROHIBIDO** tocar Vercel desde las herramientas `flow`.
++- **PROHIBIDO** usar el flag `--delete-excluded` en los comandos `rsync`.
++- **PROHIBIDO** publicar secretos o variables de entorno en el repositorio de revisión `bivenet-review`.
++
++## 6. Manejo del caché/404 de GitHub Pages
++Si el archivo `diff.txt` devuelve error 404 al Arquitecto:
++- Verificar que el servidor responde con cabeceras correctas usando `curl -I`.
++- Consultar el estado del despliegue en la API: `gh api repos/grillcheeseayutla-source/bivenet-review/pages`.
++- Forzar el refresco de caché añadiendo un timestamp: `?v=<timestamp>`.
++- Reintentar el acceso a `diff.txt`, `review.md` o `files.txt`.
++- **No hacer release** hasta que el Arquitecto pueda leer exitosamente el diff y entregue su aprobación explícita.
++
++## 7. Pendientes
++- Probar un despliegue controlado de `wsp-agent-v2` en una tarea separada y ejecutado con extrema precaución.
++- Mantener esta documentación y manuales técnicos siempre actualizados tras cada jornada.
++- Revisar periódicamente y limpiar los paquetes temporales obsoletos en `bivenet-review`.
+diff --git a/docs/bitacora/ESTADO_ACTUAL.md b/docs/bitacora/ESTADO_ACTUAL.md
+new file mode 100644
+index 0000000..f523fb1
+--- /dev/null
++++ b/docs/bitacora/ESTADO_ACTUAL.md
+@@ -0,0 +1,45 @@
++# Estado Actual de la Infraestructura Bivenet
++
++*Resumen ejecutivo para Arquitectos y mantenedores.*
++
++## 1. Arquitectura actual
++El sistema emplea un esquema híbrido y descentralizado:
++- **Frontend (Next.js):** Se delega íntegramente a Vercel mediante integraciones nativas de GitHub al realizar merges a la rama `main`.
++- **Backend (Node.js/Agentes):** Residen en un VPS Linux. Se utiliza un Clon de Apoyo local como puente para asegurar que los archivos de producción nunca se mezclen con el repositorio Git vivo, transfiriendo las actualizaciones a los directorios finales con `rsync`.
++
++## 2. Rutas reales del VPS
++- **Clon de Apoyo (Solo lectura):** `/home/soyrico699/bivenet-source`
++- **Agente 1 (Provision):** `/home/soyrico699/provision-agent-v2`
++- **Agente 2 (WhatsApp):** `/home/soyrico699/wsp-agent-v2`
++
++## 3. Comandos oficiales (Script Flow)
++- `npm run flow:save <tarea>` - Guarda cambios en rama aislada.
++- `npm run flow:plan <tarea>` - Analiza el impacto de los cambios.
++- `npm run flow:review-repo <tarea>` - Publica el diff para auditoría.
++- `npm run flow:release <tarea>` - Inyecta código al VPS e inicia Vercel.
++- `npm run flow:review-clean <tarea>` - Limpia el rastro de la auditoría.
++- `npm run flow:rollback <tarea>` - Deshace cambios de emergencia en el VPS.
++
++## 4. Servicios existentes en VPS
++- `provision-agent-v2` (Orquestación, BD, IA)
++- `wsp-agent-v2` (Conexión Baileys)
++
++## 5. Flujo aprobado
++Desarrollo local -> Guardar en rama -> Planear -> Publicar para revisión externa -> Aprobación formal del Arquitecto -> Release -> Limpieza pública.
++
++## 6. Restricciones (Lo que está Prohibido)
++- `flow:release` **SIN** autorización explícita previa de un Arquitecto.
++- Cambios indiscriminados de permisos vía `chown -R` sobre el VPS.
++- Reinicios de agentes que no fueron impactados en la tarea actual.
++- Fusión de variables de entorno y archivos críticos como `sessions/` o `auth.json` en los paquetes de release.
++- Modificaciones manuales directas ("en caliente") a través de SSH.
++
++## 7. Qué está probado
++- Validación del flujo Git + Rsync en el `provision-agent-v2`.
++- Auditoría remota vía GitHub Pages y evasión de 404 (Cache Busting).
++- Comprobación de que Vercel y `wsp-agent-v2` quedan intactos al no verse afectados en el `git diff`.
++- Secuencia de validación, despliegue y limpieza.
++
++## 8. Qué sigue pendiente
++- Prueba de fuego: despliegue controlado de una tarea real que afecte a `wsp-agent-v2`.
++- Mantenimiento general de documentación.
