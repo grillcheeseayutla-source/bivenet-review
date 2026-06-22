@@ -1,0 +1,869 @@
+diff --git a/CLAUDE.md b/CLAUDE.md
+new file mode 100644
+index 0000000..cc4217c
+--- /dev/null
++++ b/CLAUDE.md
+@@ -0,0 +1,39 @@
++# CLAUDE.md — Reglas del Proyecto Bivenet WISP SaaS
++
++## Rol del Arquitecto
++
++El Arquitecto debe planear, auditar y aprobar cambios, no ejecutar producción directamente.
++
++## Proyecto
++
++Este es un monorepo para un SaaS WISP multiusuario.
++
++Componentes principales:
++
++- Next.js: frontend y panel web.
++- provision-agent-v2: backend crítico para MikroTik, VPN, IA y aprovisionamiento.
++- wsp-agent-v2: backend de WhatsApp/Baileys.
++- Supabase: base central multiusuario.
++
++## Reglas obligatorias
++
++1. `main` es la rama estable.
++2. Toda tarea debe ir en `tarea/<id>`.
++3. Todo cambio debe revisarse por Pull Request contra `main`.
++4. No ejecutar `flow:release` sin aprobación explícita.
++5. Next.js se despliega manualmente en Vercel.
++6. `provision-agent-v2` y `wsp-agent-v2` corren en VPS con systemd.
++7. No usar PM2.
++8. No reiniciar servicios no afectados.
++9. No subir secretos, `.env`, sesiones de WhatsApp, logs, builds ni `node_modules`.
++10. GitHub es la fuente de verdad para revisión.
++11. El PR es la evidencia oficial del cambio.
++12. El rollback actual es operativo del VPS; no reescribe GitHub.
++
++## Repositorio público de revisión
++
++El repo `bivenet-review` se usa solo como ventana temporal de auditoría.
++
++El Arquitecto debe comparar el paquete de revisión contra el contexto estable de `main`.
++
++Nunca debe aprobar si el paquete contiene secretos o cambios fuera de alcance.
+diff --git a/docs/ARQUITECTURA_MASTER.md b/docs/ARQUITECTURA_MASTER.md
+new file mode 100644
+index 0000000..6bcf410
+--- /dev/null
++++ b/docs/ARQUITECTURA_MASTER.md
+@@ -0,0 +1,19 @@
++# Arquitectura Master
++
++## Ecosistema Monorepo
++Este repositorio contiene el código unificado de la plataforma Bivenet WISP SaaS. 
++
++## Componentes
++
++*   **Next.js (Frontend / Web Panel):** Aplicación principal desplegada en Vercel. No interactúa directamente por SSH con el VPS para despliegues automáticos.
++*   **provision-agent-v2 (Backend 1):** Servicio crítico de Node.js encargado de operaciones con MikroTik, VPN y lógica de aprovisionamiento/IA.
++*   **wsp-agent-v2 (Backend 2):** Servicio aislado con Baileys para la mensajería por WhatsApp.
++*   **Supabase:** Base de datos Postgres en la nube, auth y RLS (Row Level Security).
++
++## Infraestructura de Producción
++*   **VPS Google Cloud:** Máquina virtual basada en Linux (Debian/Ubuntu) donde corren los backends.
++*   **Systemd:** El administrador de demonios usado en producción. **No se utiliza PM2.**
++*   **Vercel:** Plataforma de alojamiento manual para la aplicación Next.js.
++
++## Fuente de Verdad
++GitHub es el punto central del proyecto. La rama `main` refleja el código de producción, y los flujos operan basándose en comparaciones remotas en GitHub (`origin/main`), no en el árbol de trabajo local (`working tree`).
+diff --git a/docs/CHECKLIST_AUDITORIA.md b/docs/CHECKLIST_AUDITORIA.md
+new file mode 100644
+index 0000000..93ba3e2
+--- /dev/null
++++ b/docs/CHECKLIST_AUDITORIA.md
+@@ -0,0 +1,13 @@
++# Checklist de Auditoría (Arquitecto)
++
++El Arquitecto debe verificar los siguientes puntos antes de emitir un fallo:
++
++- [ ] 1. Revisar los archivos modificados en el Pull Request.
++- [ ] 2. Confirmar que no se tocaron carpetas o módulos fuera del alcance original de la tarea.
++- [ ] 3. Confirmar que no hay secretos, `.env`, llaves, o sesiones de WhatsApp subidas por accidente.
++- [ ] 4. Confirmar que no hay rastros de `pm2` en los scripts de despliegue.
++- [ ] 5. Confirmar que el script no intentará hacer deploy automático de Next.js en Vercel.
++- [ ] 6. Confirmar el impacto real en (Next / provision-agent-v2 / wsp-agent-v2).
++- [ ] 7. Confirmar que `flow:release` no reiniciará servicios que no fueron afectados.
++- [ ] 8. Confirmar que cualquier fallo imprevisto se pueda mitigar con el `flow:rollback` operativo documentado.
++- [ ] 9. Dar veredicto final en el PR: **APROBADO PARA RELEASE** o **NO APROBADO (con correcciones necesarias)**.
+diff --git a/docs/FLUJO_SUPERVISOR_OBRERO.md b/docs/FLUJO_SUPERVISOR_OBRERO.md
+index bdd8cb4..d0fb602 100644
+--- a/docs/FLUJO_SUPERVISOR_OBRERO.md
++++ b/docs/FLUJO_SUPERVISOR_OBRERO.md
+@@ -36,6 +36,22 @@ En caso de que el sistema se rompa críticamente, este comando permite revertir
+ *   Ejecuta `git reset --hard` directamente sobre el VPS y fuerza un reinicio de ambos backends.
+ *   **Aviso:** No reescribe la historia de GitHub (main seguirá estando mal en el historial). Este rollback sirve para ganar tiempo mientras el equipo repara y lanza otro release de arreglo.
+ 
++## Revisión por repositorio público temporal
++
++Cuando Claude Project no pueda leer un Pull Request privado, se usará el repositorio público `bivenet-review`.
++
++Flujo:
++
++1. `npm run flow:save <id>`
++2. `npm run flow:plan <id>`
++3. `npm run flow:review-repo <id>`
++4. Sincronizar `bivenet-review` en Claude Project
++5. Claude revisa `reviews/<id>/review.md` y `diff.txt`
++6. Si aprueba: `npm run flow:release <id>`
++7. Borrar paquete: `npm run flow:review-clean <id>`
++
++Nunca subir secretos, `.env`, sesiones, llaves, logs, builds ni archivos sensibles.
++
+ ## Políticas de Despliegue
+ 
+ *   **Next.js y Vercel:** Next.js vive en este repositorio pero su ciclo de despliegue no es SSH. Se detecta como parte de GitHub, pero este script nunca forzará un build o un despliegue en Vercel para respetar los webhooks y CI nativos.
+diff --git a/docs/POLITICA_DEPLOY.md b/docs/POLITICA_DEPLOY.md
+new file mode 100644
+index 0000000..6e2d2e2
+--- /dev/null
++++ b/docs/POLITICA_DEPLOY.md
+@@ -0,0 +1,27 @@
++# Política de Deploy
++
++Esta política garantiza la seguridad del VPS y los tiempos de inactividad mínimos.
++
++## Fases del Despliegue
++
++1.  **Save (`flow:save`):** Empaqueta y sube una rama. **No toca producción.**
++2.  **Plan (`flow:plan`):** Calcula los impactos remotamente. **No toca producción.**
++3.  **PR (`flow:pr` / manual):** Se crea el Pull Request. **No toca producción.**
++4.  **Release (`flow:release`):** Solo se ejecuta con aprobación explícita del Arquitecto. Realiza el merge, push, y conexión SSH.
++
++## Reglas por Ecosistema
++
++*   **Next.js:** No se despliega automáticamente. Vercel debe dispararse manual o vía sus propios webhooks controlados.
++*   **provision-agent-v2:** Solo se reinicia su servicio de `systemd` si existieron cambios detectados dentro de la carpeta `provision-agent-v2/`.
++*   **wsp-agent-v2:** Solo se reinicia su servicio de `systemd` si existieron cambios detectados dentro de la carpeta `wsp-agent-v2/`.
++
++## Rollback Operativo
++El comando `flow:rollback` es una herramienta operativa de emergencia. Actúa **directamente en el VPS** para forzar un `git reset --hard` a un commit anterior seguro. **No reescribe el historial de GitHub**, por lo que la rama remota seguirá requiriendo una corrección posterior.
++
++## Paquete público de revisión
++
++El paquete público de revisión no es producción y no autoriza release por sí solo.
++
++Solo permite que el Arquitecto lea los cambios cuando el repo principal o el PR privado no sean accesibles.
++
++Todo release requiere aprobación explícita.
+diff --git a/dummy-test.txt b/dummy-test.txt
+new file mode 100644
+index 0000000..2bfd308
+--- /dev/null
++++ b/dummy-test.txt
+@@ -0,0 +1,5 @@
++Este es un archivo de prueba simulando un cambio en el repositorio.
++Su objetivo es validar que el Arquitecto (Claude Project) pueda leer correctamente el paquete de revisión
++público usando GitHub Pages (diff.txt) en lugar del dominio restringido de raw.githubusercontent.com.
++
++Si el Arquitecto puede leer este archivo sin problemas de MIME type o de scraping, el sistema está 100% operativo.
+diff --git a/package.json b/package.json
+index 6a5acfd..13aec2d 100644
+--- a/package.json
++++ b/package.json
+@@ -8,10 +8,12 @@
+     "start": "next start",
+     "lint": "eslint .",
+     "deploy": "node scripts/deploy.js",
+-    "flow:save": "node scripts/flow.js save",
+-    "flow:plan": "node scripts/flow.js plan",
+-    "flow:release": "node scripts/flow.js release",
+-    "flow:rollback": "node scripts/flow.js rollback"
++    "flow:save": "node scripts/flow.mjs save",
++    "flow:plan": "node scripts/flow.mjs plan",
++    "flow:review-repo": "node scripts/flow.mjs review-repo",
++    "flow:review-clean": "node scripts/flow.mjs review-clean",
++    "flow:release": "node scripts/flow.mjs release",
++    "flow:rollback": "node scripts/flow.mjs rollback"
+   },
+   "dependencies": {
+     "@hookform/resolvers": "^3.9.1",
+diff --git a/scripts/flow.js b/scripts/flow.js
+deleted file mode 100644
+index 1baab69..0000000
+--- a/scripts/flow.js
++++ /dev/null
+@@ -1,214 +0,0 @@
+-import { execSync } from 'child_process';
+-import process from 'process';
+-
+-const VPS_IP = "34.173.151.127";
+-const VPS_USER = "soyrico699";
+-const REMOTE_PATH = "/home/soyrico699/next-js-supabase-starter";
+-const SSH_KEY = "~/.ssh/google_compute_engine";
+-
+-const [,, command, arg] = process.argv;
+-
+-// Helper to run commands
+-function runCmd(cmd, returnOutput = false) {
+-  try {
+-    const output = execSync(cmd, { encoding: 'utf-8', stdio: returnOutput ? 'pipe' : 'inherit' });
+-    return returnOutput ? output.trim() : true;
+-  } catch (error) {
+-    if (returnOutput) {
+-        throw error;
+-    }
+-    return false;
+-  }
+-}
+-
+-// Validate ID
+-function validateId(id) {
+-  if (!id || !/^[a-zA-Z0-9._-]+$/.test(id)) {
+-    console.error("❌ Error: ID de tarea inválido. Solo se permiten letras, números, guiones y puntos.");
+-    console.error("Ejemplos válidos: setup-flow, ai-context-fix");
+-    process.exit(1);
+-  }
+-}
+-
+-// Check remote branch existence
+-function remoteBranchExists(id) {
+-  try {
+-    runCmd(`git fetch origin main`, true);
+-    runCmd(`git fetch origin tarea/${id}`, true);
+-    return true;
+-  } catch (e) {
+-    return false;
+-  }
+-}
+-
+-// Analyze impact based on diff
+-function analyzeImpact(id) {
+-  try {
+-    const output = runCmd(`git diff --name-only origin/main...origin/tarea/${id}`, true);
+-    const files = output.split('\n').filter(Boolean);
+-    
+-    let hasNextJs = false;
+-    let hasProvision = false;
+-    let hasWsp = false;
+-
+-    const nextJsPaths = ['app/', 'pages/', 'src/', 'components/', 'lib/', 'public/', 'styles/', 'next.config.', 'middleware.', 'tailwind.config.', 'tsconfig.json', 'package.json', 'package-lock.json', 'pnpm-lock.yaml', 'yarn.lock'];
+-
+-    for (const file of files) {
+-      if (file.startsWith('provision-agent-v2/')) {
+-        hasProvision = true;
+-      } else if (file.startsWith('wsp-agent-v2/')) {
+-        hasWsp = true;
+-      } else {
+-        for (const p of nextJsPaths) {
+-          if (file.startsWith(p) || file === p) {
+-            hasNextJs = true;
+-            break;
+-          }
+-        }
+-      }
+-    }
+-
+-    return { files, hasNextJs, hasProvision, hasWsp };
+-  } catch (e) {
+-    console.error("❌ Error al comparar ramas. ¿Estás seguro de que existe origin/main y origin/tarea/" + id + "?");
+-    process.exit(1);
+-  }
+-}
+-
+-if (command === 'save') {
+-  validateId(arg);
+-  console.log(`\n💾 Iniciando guardado para la tarea: ${arg}`);
+-  
+-  // Checkout branch
+-  try {
+-    runCmd(`git checkout -b tarea/${arg}`, true);
+-  } catch (e) {
+-    runCmd(`git checkout tarea/${arg}`, true);
+-  }
+-
+-  const status = runCmd(`git status --porcelain`, true);
+-  if (!status) {
+-    console.log("No hay cambios nuevos que guardar.");
+-  } else {
+-    console.log(`Archivos modificados:\n${status}`);
+-    runCmd(`git add .`);
+-    runCmd(`git commit -m "wip: tarea ${arg}"`);
+-  }
+-
+-  console.log("Subiendo rama a GitHub...");
+-  runCmd(`git push -u origin tarea/${arg} --force-with-lease`);
+-  console.log("✅ Tarea guardada y subida con éxito.");
+-
+-} else if (command === 'plan') {
+-  validateId(arg);
+-  
+-  if (!remoteBranchExists(arg)) {
+-    console.error(`\n❌ La rama origin/tarea/${arg} no existe. Ejecuta primero flow:save.`);
+-    process.exit(1);
+-  }
+-
+-  const impact = analyzeImpact(arg);
+-
+-  console.log(`\n[PLAN] tarea/${arg}\n`);
+-  
+-  if (impact.files.length > 0) {
+-      console.log("Archivos modificados detectados:");
+-      impact.files.forEach(f => console.log(`  - ${f}`));
+-  } else {
+-      console.log("No se detectaron diferencias con main.");
+-  }
+-
+-  console.log("\nCambios detectados:");
+-  console.log(`- provision-agent-v2: ${impact.hasProvision ? 'SÍ' : 'NO'}`);
+-  console.log(`- wsp-agent-v2: ${impact.hasWsp ? 'SÍ' : 'NO'}`);
+-  console.log(`- Next.js: ${impact.hasNextJs ? 'SÍ' : 'NO'}`);
+-
+-  console.log("\nAcciones en release:");
+-  console.log(`- merge tarea/${arg} -> main`);
+-  console.log("- push origin main");
+-  console.log("- SSH al VPS");
+-  console.log("- git pull origin main");
+-  if (impact.hasProvision) {
+-    console.log("- restart provision-agent-v2");
+-    console.log("- health check provision-agent-v2");
+-  }
+-  if (impact.hasWsp) {
+-    console.log("- restart wsp-agent-v2");
+-    console.log("- health check wsp-agent-v2");
+-  }
+-  if (impact.hasNextJs) {
+-    console.log("\n⚠️ ATENCIÓN: Se detectaron cambios en Next.js. Despliegue manual requerido en Vercel.");
+-  }
+-
+-} else if (command === 'release') {
+-  validateId(arg);
+-
+-  const status = runCmd(`git status --porcelain`, true);
+-  if (status) {
+-    console.error("❌ Error: Working tree sucio. Haz commit o stash antes de hacer release.");
+-    process.exit(1);
+-  }
+-
+-  if (!remoteBranchExists(arg)) {
+-    console.error(`\n❌ La rama origin/tarea/${arg} no existe. Ejecuta primero flow:save.`);
+-    process.exit(1);
+-  }
+-
+-  const impact = analyzeImpact(arg);
+-  
+-  console.log(`\n🚀 Iniciando Release para tarea/${arg}\n`);
+-  
+-  const currentCommit = runCmd(`git rev-parse origin/main`, true);
+-  console.log(`El preCommit de origin/main es: ${currentCommit}`);
+-
+-  runCmd(`git checkout main`);
+-  runCmd(`git pull origin main`);
+-  runCmd(`git merge --no-ff origin/tarea/${arg}`);
+-  runCmd(`git push origin main`);
+-
+-  console.log("\n🔒 Conectando al VPS...");
+-  
+-  let remoteCmd = `cd ${REMOTE_PATH} && git fetch --all && git checkout main && git pull origin main`;
+-
+-  if (impact.hasProvision) {
+-    remoteCmd += ` && sudo systemctl restart provision-agent-v2 && sleep 2 && sudo systemctl is-active --quiet provision-agent-v2 && sudo journalctl -u provision-agent-v2 -n 40 --no-pager`;
+-  }
+-  if (impact.hasWsp) {
+-    remoteCmd += ` && sudo systemctl restart wsp-agent-v2 && sleep 2 && sudo systemctl is-active --quiet wsp-agent-v2 && sudo journalctl -u wsp-agent-v2 -n 40 --no-pager`;
+-  }
+-
+-  try {
+-    runCmd(`ssh -i ${SSH_KEY} ${VPS_USER}@${VPS_IP} "${remoteCmd}"`);
+-    console.log("\n✅ Release completado exitosamente.");
+-  } catch(e) {
+-    console.error("\n❌ Error crítico: Falló el reinicio o health check (is-active) en el VPS.");
+-    process.exit(1);
+-  }
+-
+-  if (impact.hasNextJs) {
+-    console.log("\n⚠️ RECORDATORIO: Hubo cambios en Next.js. ¡Despliega manualmente en Vercel!");
+-  }
+-
+-} else if (command === 'rollback') {
+-  if (!arg) {
+-    console.error("❌ Especifica el commit a revertir. Uso: flow:rollback <commit>");
+-    process.exit(1);
+-  }
+-
+-  console.log(`\n⏪ Iniciando Rollback de emergencia al commit: ${arg}`);
+-  console.log("Este rollback es operativo solo en VPS, no reescribe el historial de GitHub.\n");
+-
+-  const remoteCmd = `cd ${REMOTE_PATH} && git fetch --all && git checkout main && git reset --hard ${arg} && sudo systemctl restart provision-agent-v2 && sudo systemctl restart wsp-agent-v2 && sleep 2 && sudo systemctl is-active --quiet provision-agent-v2 && sudo systemctl is-active --quiet wsp-agent-v2`;
+-
+-  try {
+-    runCmd(`ssh -i ${SSH_KEY} ${VPS_USER}@${VPS_IP} "${remoteCmd}"`);
+-    console.log("\n✅ Rollback operativo completado y verificado en VPS.");
+-  } catch(e) {
+-    console.error("\n❌ Error durante el rollback. Verifica el estado del servidor manualmente.");
+-    process.exit(1);
+-  }
+-
+-} else {
+-  console.error("❌ Comando desconocido. Usa: save, plan, release, rollback.");
+-  process.exit(1);
+-}
+diff --git a/scripts/flow.mjs b/scripts/flow.mjs
+new file mode 100644
+index 0000000..715ceb7
+--- /dev/null
++++ b/scripts/flow.mjs
+@@ -0,0 +1,462 @@
++import { execSync } from 'child_process';
++import process from 'process';
++
++const VPS_IP = "34.173.151.127";
++const VPS_USER = "soyrico699";
++const REMOTE_PATH = "/home/soyrico699/next-js-supabase-starter";
++const SSH_KEY = "~/.ssh/google_compute_engine";
++const REVIEW_REPO = process.env.BIVENET_REVIEW_REPO || "grillcheeseayutla-source/bivenet-review";
++const REVIEW_REPO_BRANCH = process.env.BIVENET_REVIEW_BRANCH || "main";
++
++const [,, command, arg] = process.argv;
++
++// Helper to run commands
++function runCmd(cmd, returnOutput = false) {
++  try {
++    const output = execSync(cmd, { encoding: 'utf-8', stdio: returnOutput ? 'pipe' : 'inherit' });
++    return returnOutput ? output.trim() : true;
++  } catch (error) {
++    if (returnOutput) {
++        throw error;
++    }
++    return false;
++  }
++}
++
++// Validate ID
++function validateId(id) {
++  if (!id || !/^[a-zA-Z0-9._-]+$/.test(id)) {
++    console.error("❌ Error: ID de tarea inválido. Solo se permiten letras, números, guiones y puntos.");
++    console.error("Ejemplos válidos: setup-flow, ai-context-fix");
++    process.exit(1);
++  }
++}
++
++// Check remote branch existence
++function remoteBranchExists(id) {
++  try {
++    runCmd(`git fetch origin main`, true);
++    runCmd(`git fetch origin tarea/${id}`, true);
++    return true;
++  } catch (e) {
++    return false;
++  }
++}
++
++// Analyze impact based on diff
++function analyzeImpact(id) {
++  try {
++    const output = runCmd(`git diff --name-only origin/main...origin/tarea/${id}`, true);
++    const files = output.split('\n').filter(Boolean);
++    
++    let hasNextJs = false;
++    let hasProvision = false;
++    let hasWsp = false;
++
++    const nextJsPaths = ['app/', 'pages/', 'src/', 'components/', 'lib/', 'public/', 'styles/', 'next.config.', 'middleware.', 'tailwind.config.', 'tsconfig.json', 'package.json', 'package-lock.json', 'pnpm-lock.yaml', 'yarn.lock'];
++
++    for (const file of files) {
++      if (file.startsWith('provision-agent-v2/')) {
++        hasProvision = true;
++      } else if (file.startsWith('wsp-agent-v2/')) {
++        hasWsp = true;
++      } else {
++        for (const p of nextJsPaths) {
++          if (file.startsWith(p) || file === p) {
++            hasNextJs = true;
++            break;
++          }
++        }
++      }
++    }
++
++    return { files, hasNextJs, hasProvision, hasWsp };
++  } catch (e) {
++    console.error("❌ Error al comparar ramas. ¿Estás seguro de que existe origin/main y origin/tarea/" + id + "?");
++    process.exit(1);
++  }
++}
++
++if (command === 'save') {
++  validateId(arg);
++  console.log(`\n💾 Iniciando guardado para la tarea: ${arg}`);
++  
++  // Checkout branch
++  try {
++    runCmd(`git checkout -b tarea/${arg}`, true);
++  } catch (e) {
++    runCmd(`git checkout tarea/${arg}`, true);
++  }
++
++  const status = runCmd(`git status --porcelain`, true);
++  if (!status) {
++    console.log("No hay cambios nuevos que guardar.");
++  } else {
++    console.log(`Archivos modificados:\n${status}`);
++    runCmd(`git add .`);
++    runCmd(`git commit -m "wip: tarea ${arg}"`);
++  }
++
++  console.log("Subiendo rama a GitHub...");
++  runCmd(`git push -u origin tarea/${arg} --force-with-lease`);
++  console.log("✅ Tarea guardada y subida con éxito.");
++
++} else if (command === 'plan') {
++  validateId(arg);
++  
++  if (!remoteBranchExists(arg)) {
++    console.error(`\n❌ La rama origin/tarea/${arg} no existe. Ejecuta primero flow:save.`);
++    process.exit(1);
++  }
++
++  const impact = analyzeImpact(arg);
++
++  console.log(`\n[PLAN] tarea/${arg}\n`);
++  
++  if (impact.files.length > 0) {
++      console.log("Archivos modificados detectados:");
++      impact.files.forEach(f => console.log(`  - ${f}`));
++  } else {
++      console.log("No se detectaron diferencias con main.");
++  }
++
++  console.log("\nCambios detectados:");
++  console.log(`- provision-agent-v2: ${impact.hasProvision ? 'SÍ' : 'NO'}`);
++  console.log(`- wsp-agent-v2: ${impact.hasWsp ? 'SÍ' : 'NO'}`);
++  console.log(`- Next.js: ${impact.hasNextJs ? 'SÍ' : 'NO'}`);
++
++  console.log("\nAcciones en release:");
++  console.log(`- merge tarea/${arg} -> main`);
++  console.log("- push origin main");
++  console.log("- SSH al VPS");
++  console.log("- git pull origin main");
++  if (impact.hasProvision) {
++    console.log("- restart provision-agent-v2");
++    console.log("- health check provision-agent-v2");
++  }
++  if (impact.hasWsp) {
++    console.log("- restart wsp-agent-v2");
++    console.log("- health check wsp-agent-v2");
++  }
++  if (impact.hasNextJs) {
++    console.log("\n⚠️ ATENCIÓN: Se detectaron cambios en Next.js. Despliegue manual requerido en Vercel.");
++  }
++
++} else if (command === 'pr') {
++  validateId(arg);
++  
++  if (!remoteBranchExists(arg)) {
++    console.error(`\n❌ La rama origin/tarea/${arg} no existe. Ejecuta primero npm run flow:save ${arg}.`);
++    process.exit(1);
++  }
++
++  // Check if PR already exists
++  try {
++    const existingPrUrl = runCmd(`gh pr view tarea/${arg} --json url --jq .url`, true);
++    if (existingPrUrl) {
++      console.log(`\n✅ Ya existe un Pull Request para la rama tarea/${arg}.`);
++      console.log(`URL: ${existingPrUrl}`);
++      process.exit(0);
++    }
++  } catch (e) {
++    // gh pr view returns non-zero if no PR exists, which is expected.
++  }
++
++  const impact = analyzeImpact(arg);
++
++  console.log(`\n🚀 Creando Pull Request para tarea/${arg}...`);
++
++  const bodyContent = `
++# Tarea: ${arg}
++
++## Ramas
++
++Base: main  
++Trabajo: tarea/${arg}
++
++## Impacto detectado
++
++- Next.js: ${impact.hasNextJs ? 'SÍ' : 'NO'}
++- provision-agent-v2: ${impact.hasProvision ? 'SÍ' : 'NO'}
++- wsp-agent-v2: ${impact.hasWsp ? 'SÍ' : 'NO'}
++
++## Reglas
++
++- Next.js se despliega manualmente en Vercel.
++- Los backends solo se despliegan con \`npm run flow:release ${arg}\`.
++- No usar PM2.
++- No reiniciar servicios no afectados.
++- No ejecutar release sin aprobación del Arquitecto.
++
++## Veredicto requerido
++
++El Arquitecto debe responder:
++
++APROBADO PARA RELEASE
++
++o
++
++NO APROBADO, con correcciones necesarias.
++  `.trim();
++
++  try {
++    const fs = await import('fs');
++    const path = await import('path');
++    const os = await import('os');
++    const tempBodyPath = path.join(os.tmpdir(), `pr_body_${arg}_${Date.now()}.txt`);
++    
++    try {
++      fs.writeFileSync(tempBodyPath, bodyContent);
++      runCmd(`gh pr create --base main --head tarea/${arg} --title "Tarea: ${arg}" --body-file "${tempBodyPath}"`);
++      console.log(`\n✅ Pull Request creado exitosamente.`);
++      
++      const prUrl = runCmd(`gh pr view tarea/${arg} --json url --jq .url`, true);
++      console.log(`URL del PR: ${prUrl}`);
++    } finally {
++      if (fs.existsSync(tempBodyPath)) {
++        fs.unlinkSync(tempBodyPath);
++      }
++    }
++  } catch (e) {
++    console.error(`\n❌ Error al crear el Pull Request con gh CLI. Asegúrate de estar autenticado.`);
++  }
++
++} else if (command === 'release') {
++  validateId(arg);
++
++  const status = runCmd(`git status --porcelain`, true);
++  if (status) {
++    console.error("❌ Error: Working tree sucio. Haz commit o stash antes de hacer release.");
++    process.exit(1);
++  }
++
++  if (!remoteBranchExists(arg)) {
++    console.error(`\n❌ La rama origin/tarea/${arg} no existe. Ejecuta primero flow:save.`);
++    process.exit(1);
++  }
++
++  const impact = analyzeImpact(arg);
++  
++  console.log(`\n🚀 Iniciando Release para tarea/${arg}\n`);
++  
++  const currentCommit = runCmd(`git rev-parse origin/main`, true);
++  console.log(`El preCommit de origin/main es: ${currentCommit}`);
++
++  runCmd(`git checkout main`);
++  runCmd(`git pull origin main`);
++  runCmd(`git merge --no-ff origin/tarea/${arg}`);
++  runCmd(`git push origin main`);
++
++  console.log("\n🔒 Conectando al VPS...");
++  
++  let remoteCmd = `cd ${REMOTE_PATH} && git fetch --all && git checkout main && git pull origin main`;
++
++  if (impact.hasProvision) {
++    remoteCmd += ` && sudo systemctl restart provision-agent-v2 && sleep 2 && sudo systemctl is-active --quiet provision-agent-v2 && sudo journalctl -u provision-agent-v2 -n 40 --no-pager`;
++  }
++  if (impact.hasWsp) {
++    remoteCmd += ` && sudo systemctl restart wsp-agent-v2 && sleep 2 && sudo systemctl is-active --quiet wsp-agent-v2 && sudo journalctl -u wsp-agent-v2 -n 40 --no-pager`;
++  }
++
++  try {
++    runCmd(`ssh -i ${SSH_KEY} ${VPS_USER}@${VPS_IP} "${remoteCmd}"`);
++    console.log("\n✅ Release completado exitosamente.");
++  } catch(e) {
++    console.error("\n❌ Error crítico: Falló el reinicio o health check (is-active) en el VPS.");
++    process.exit(1);
++  }
++
++  if (impact.hasNextJs) {
++    console.log("\n⚠️ RECORDATORIO: Hubo cambios en Next.js. ¡Despliega manualmente en Vercel!");
++  }
++
++} else if (command === 'rollback') {
++  if (!arg) {
++    console.error("❌ Especifica el commit a revertir. Uso: flow:rollback <commit>");
++    process.exit(1);
++  }
++
++  console.log(`\n⏪ Iniciando Rollback de emergencia al commit: ${arg}`);
++  console.log("Este rollback es operativo solo en VPS, no reescribe el historial de GitHub.\n");
++
++  const remoteCmd = `cd ${REMOTE_PATH} && git fetch --all && git checkout main && git reset --hard ${arg} && sudo systemctl restart provision-agent-v2 && sudo systemctl restart wsp-agent-v2 && sleep 2 && sudo systemctl is-active --quiet provision-agent-v2 && sudo systemctl is-active --quiet wsp-agent-v2`;
++
++  try {
++    runCmd(`ssh -i ${SSH_KEY} ${VPS_USER}@${VPS_IP} "${remoteCmd}"`);
++    console.log("\n✅ Rollback operativo completado y verificado en VPS.");
++  } catch(e) {
++    console.error("\n❌ Error durante el rollback. Verifica el estado del servidor manualmente.");
++    process.exit(1);
++  }
++
++} else if (command === 'review-repo') {
++  validateId(arg);
++  
++  if (!remoteBranchExists(arg)) {
++    console.error(`\n❌ La rama origin/tarea/${arg} no existe. Ejecuta primero npm run flow:save ${arg}.`);
++    process.exit(1);
++  }
++
++  const impact = analyzeImpact(arg);
++  const diffStat = runCmd(`git diff --stat origin/main...origin/tarea/${arg}`, true);
++  const fullDiff = runCmd(`git diff origin/main...origin/tarea/${arg}`, true);
++
++  // Security filters (obfuscated in source to avoid self-blocking in diffs)
++  const sensitivePaths = ['.env', '.env.local', '.env.production', 'node_modules/', '.next/', '.vercel/', 'dist/', 'build/', 'logs/', 'sessions/', 'auth/', 'baileys/', 'store/', '.pem', '.key', '.crt', '.p12', 'google_compute_engine'];
++  const sensitiveTexts = ['PRIVATE' + ' KEY', 'BEGIN' + ' RSA', 'BEGIN' + ' OPENSSH', 'SUPABASE' + '_SERVICE_ROLE', 'SERVICE' + '_ROLE_KEY', 'GEMINI' + '_API_KEY', 'ANTHROPIC' + '_API_KEY', 'OPENAI' + '_API_KEY', 'JWT' + '_SECRET', 'DATABASE' + '_URL'];
++
++  for (const file of impact.files) {
++    if (sensitivePaths.some(p => file.includes(p))) {
++      console.error(`\n❌ Revisión pública bloqueada por posible secreto o archivo sensible en: ${file}`);
++      process.exit(1);
++    }
++  }
++
++  if (sensitiveTexts.some(t => fullDiff.includes(t))) {
++    console.error(`\n❌ Revisión pública bloqueada por posible secreto o texto sensible en el diff.`);
++    process.exit(1);
++  }
++
++  try {
++    const fs = await import('fs');
++    const path = await import('path');
++    const os = await import('os');
++    
++    const tempWorkDir = path.join(os.tmpdir(), `bivenet-review-work-${arg}-${Date.now()}`);
++    const tempRepoDir = path.join(os.tmpdir(), `bivenet-review-repo-${arg}-${Date.now()}`);
++    
++    fs.mkdirSync(tempWorkDir, { recursive: true });
++
++    const reviewContent = `# Paquete de revisión Bivenet
++
++## ID de tarea
++
++${arg}
++
++## Rama base
++
++origin/main
++
++## Rama revisada
++
++origin/tarea/${arg}
++
++## Archivos modificados
++
++${impact.files.map(f => '- ' + f).join('\n')}
++
++## Diff stat
++
++\`\`\`
++${diffStat}
++\`\`\`
++
++## Impacto detectado
++
++- Next.js: ${impact.hasNextJs ? 'SÍ' : 'NO'}
++- provision-agent-v2: ${impact.hasProvision ? 'SÍ' : 'NO'}
++- wsp-agent-v2: ${impact.hasWsp ? 'SÍ' : 'NO'}
++
++## Resultado esperado si se aprueba release
++
++- Merge a main.
++- Push a origin/main.
++- Next.js se despliega manualmente en Vercel si aplica.
++- Solo se reinician backends afectados.
++- No usar PM2.
++
++## Reglas de revisión
++
++Este paquete público es solo para revisión del Arquitecto.
++
++No autoriza release por sí solo.
++
++El Arquitecto debe revisar \`review.md\`, \`files.txt\` y \`diff.patch\`.
++
++## Veredicto requerido
++
++Responder exactamente una de estas opciones:
++
++APROBADO PARA RELEASE
++
++o
++
++NO APROBADO, con correcciones necesarias.
++`;
++
++    fs.writeFileSync(path.join(tempWorkDir, 'review.md'), reviewContent);
++    fs.writeFileSync(path.join(tempWorkDir, 'diff.txt'), fullDiff);
++    fs.writeFileSync(path.join(tempWorkDir, 'files.txt'), impact.files.join('\n'));
++
++    console.log("\n📦 Clonando repositorio público...");
++    runCmd(`gh repo clone ${REVIEW_REPO} ${tempRepoDir}`);
++
++    const targetDir = path.join(tempRepoDir, 'reviews', arg);
++    fs.mkdirSync(targetDir, { recursive: true });
++
++    fs.copyFileSync(path.join(tempWorkDir, 'review.md'), path.join(targetDir, 'review.md'));
++    fs.copyFileSync(path.join(tempWorkDir, 'diff.txt'), path.join(targetDir, 'diff.txt'));
++    fs.copyFileSync(path.join(tempWorkDir, 'files.txt'), path.join(targetDir, 'files.txt'));
++
++    console.log("\n🚀 Subiendo paquete al repo público...");
++    const cmdOpts = `cd ${tempRepoDir} && git add reviews/${arg}/`;
++    const gitStatus = runCmd(`cd ${tempRepoDir} && git status --porcelain`, true);
++    
++    if (!gitStatus) {
++      console.log("El paquete ya estaba actualizado.");
++    } else {
++      runCmd(`cd ${tempRepoDir} && git add reviews/${arg}/ && git commit -m "review: ${arg}" && git push origin main`);
++    }
++
++    const repoOwner = REVIEW_REPO.split('/')[0];
++    const repoName = REVIEW_REPO.split('/')[1];
++
++    console.log(`\n✅ Paquete de revisión publicado vía GitHub Pages.
++
++URL DIRECTA PARA CLAUDE:
++https://${repoOwner}.github.io/${repoName}/reviews/${arg}/diff.txt
++
++Archivos adicionales disponibles:
++- https://${repoOwner}.github.io/${repoName}/reviews/${arg}/review.md
++- https://${repoOwner}.github.io/${repoName}/reviews/${arg}/files.txt
++
++Instrucción para Claude Project:
++"Por favor, lee el diff completo de mi tarea accediendo a esta URL: https://${repoOwner}.github.io/${repoName}/reviews/${arg}/diff.txt y entrégame tu auditoría (APROBADO PARA RELEASE o NO APROBADO)."`);
++
++    // Cleanup
++    fs.rmSync(tempWorkDir, { recursive: true, force: true });
++    fs.rmSync(tempRepoDir, { recursive: true, force: true });
++  } catch (e) {
++    console.error(`\n❌ Error en flow:review-repo: ${e.message}`);
++  }
++
++} else if (command === 'review-clean') {
++  validateId(arg);
++
++  try {
++    const fs = await import('fs');
++    const path = await import('path');
++    const os = await import('os');
++    const tempRepoDir = path.join(os.tmpdir(), `bivenet-review-repo-clean-${arg}-${Date.now()}`);
++
++    console.log("\n🧹 Clonando repositorio público para limpieza...");
++    runCmd(`gh repo clone ${REVIEW_REPO} ${tempRepoDir}`);
++
++    const targetDir = path.join(tempRepoDir, 'reviews', arg);
++    if (!fs.existsSync(targetDir)) {
++      console.log(`\nNo existe paquete de revisión para ${arg}.`);
++    } else {
++      fs.rmSync(targetDir, { recursive: true, force: true });
++      runCmd(`cd ${tempRepoDir} && git add -A && git commit -m "clean: review ${arg}" && git push origin main`);
++      console.log(`\n✅ Paquete de revisión ${arg} eliminado del repo público.`);
++    }
++
++    fs.rmSync(tempRepoDir, { recursive: true, force: true });
++  } catch (e) {
++    console.error(`\n❌ Error en flow:review-clean: ${e.message}`);
++  }
++
++} else {
++  console.error("❌ Comando desconocido. Usa: save, plan, pr, review-repo, review-clean, release, rollback.");
++  process.exit(1);
++}
