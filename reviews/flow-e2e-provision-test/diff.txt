@@ -1,0 +1,16 @@
+diff --git a/provision-agent-v2/DEPLOY_TEST.md b/provision-agent-v2/DEPLOY_TEST.md
+new file mode 100644
+index 0000000..8704e4b
+--- /dev/null
++++ b/provision-agent-v2/DEPLOY_TEST.md
+@@ -0,0 +1,10 @@
++# Deploy Test
++
++ID: flow-e2e-provision-test
++
++Este archivo solo prueba el flujo de deploy selectivo de provision-agent-v2.
++
++No modifica lógica de producción.
++No toca routers.
++No toca clientes.
++No toca base de datos.
