@@ -1,0 +1,8 @@
+CLAUDE.md
+docs/ARQUITECTURA_MASTER.md
+docs/CHECKLIST_AUDITORIA.md
+docs/FLUJO_SUPERVISOR_OBRERO.md
+docs/POLITICA_DEPLOY.md
+package.json
+scripts/flow.js
+scripts/flow.mjs
