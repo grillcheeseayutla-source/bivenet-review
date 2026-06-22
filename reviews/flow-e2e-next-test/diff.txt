@@ -1,0 +1,14 @@
+diff --git a/app/flow-test/page.tsx b/app/flow-test/page.tsx
+new file mode 100644
+index 0000000..c14add3
+--- /dev/null
++++ b/app/flow-test/page.tsx
+@@ -0,0 +1,8 @@
++export default function FlowTestPage() {
++  return (
++    <div style={{ padding: '50px', textAlign: 'center', fontFamily: 'sans-serif' }}>
++      <h1>Bivenet Flow Test</h1>
++      <p>ID: flow-e2e-next-test</p>
++    </div>
++  );
++}
