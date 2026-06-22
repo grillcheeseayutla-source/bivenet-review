@@ -1,0 +1,67 @@
+diff --git a/provision-agent-v2/server.mjs b/provision-agent-v2/server.mjs
+index 496dcec..be44ecd 100644
+--- a/provision-agent-v2/server.mjs
++++ b/provision-agent-v2/server.mjs
+@@ -14,7 +14,7 @@ import monitoringRoutes from './modules/monitoring/monitoring.router.mjs';
+ import reportsRoutes from './modules/reports/reports.router.mjs';
+ 
+ const app = express();
+-console.log("=== ARQUITECTURA GIT ACTIVADA ===");
++console.log("=== ARQUITECTURA RSYNC ACTIVADA ===");
+ 
+ app.use(proxyMiddleware);
+ 
+diff --git a/scripts/flow.mjs b/scripts/flow.mjs
+index dea9e22..7ae92b2 100644
+--- a/scripts/flow.mjs
++++ b/scripts/flow.mjs
+@@ -3,7 +3,7 @@ import process from 'process';
+ 
+ const VPS_IP = "34.173.151.127";
+ const VPS_USER = "soyrico699";
+-const REMOTE_PATH = "/home/soyrico699/next-js-supabase-starter";
++const SUPPORT_CLONE_PATH = "/home/soyrico699/bivenet-source";
+ const SSH_KEY = "~/.ssh/google_compute_engine";
+ const REVIEW_REPO = process.env.BIVENET_REVIEW_REPO || "grillcheeseayutla-source/bivenet-review";
+ const REVIEW_REPO_BRANCH = process.env.BIVENET_REVIEW_BRANCH || "main";
+@@ -131,13 +131,15 @@ if (command === 'save') {
+   console.log(`- merge tarea/${arg} -> main`);
+   console.log("- push origin main");
+   console.log("- SSH al VPS");
+-  console.log(`- cd ${REMOTE_PATH}`);
++  console.log(`- cd ${SUPPORT_CLONE_PATH}`);
+   console.log("- git pull origin main");
+   if (impact.hasProvision) {
++    console.log("- rsync a /home/soyrico699/provision-agent-v2/");
+     console.log("- restart provision-agent-v2");
+     console.log("- health check provision-agent-v2");
+   }
+   if (impact.hasWsp) {
++    console.log("- rsync a /home/soyrico699/wsp-agent-v2/");
+     console.log("- restart wsp-agent-v2");
+     console.log("- health check wsp-agent-v2");
+   }
+@@ -253,15 +255,19 @@ NO APROBADO, con correcciones necesarias.
+   const backendFiles = impact.files.filter(f => f.startsWith('provision-agent-v2/') || f.startsWith('wsp-agent-v2/'));
+ 
+   if (backendFiles.length > 0) {
+-    console.log("\n📦 Aplicando cambios en VPS mediante git pull...");
++    console.log("\n📦 Aplicando cambios en VPS mediante Git + Rsync...");
+     
+-    let remoteCmd = `cd ${REMOTE_PATH} && git pull origin main`;
++    let remoteCmd = `cd ${SUPPORT_CLONE_PATH} && git pull origin main`;
+     
++    const rsyncExcludes = `--exclude '.env*' --exclude 'node_modules/' --exclude 'auth.json' --exclude 'auth_info_baileys/' --exclude 'sessions/' --exclude '*.log' --exclude 'serviceAccountKey.json'`;
++
+     if (impact.hasProvision) {
+-      remoteCmd += ` && cd provision-agent-v2 && npm install && sudo systemctl restart provision-agent-v2 && sudo systemctl is-active --quiet provision-agent-v2 && cd ..`;
++      remoteCmd += ` && rsync -avz ${rsyncExcludes} ${SUPPORT_CLONE_PATH}/provision-agent-v2/ /home/soyrico699/provision-agent-v2/`;
++      remoteCmd += ` && cd /home/soyrico699/provision-agent-v2 && npm install && sudo systemctl restart provision-agent-v2 && sudo systemctl is-active --quiet provision-agent-v2`;
+     }
+     if (impact.hasWsp) {
+-      remoteCmd += ` && cd wsp-agent-v2 && npm install && sudo systemctl restart wsp-agent-v2 && sudo systemctl is-active --quiet wsp-agent-v2 && cd ..`;
++      remoteCmd += ` && rsync -avz ${rsyncExcludes} ${SUPPORT_CLONE_PATH}/wsp-agent-v2/ /home/soyrico699/wsp-agent-v2/`;
++      remoteCmd += ` && cd /home/soyrico699/wsp-agent-v2 && npm install && sudo systemctl restart wsp-agent-v2 && sudo systemctl is-active --quiet wsp-agent-v2`;
+     }
+     
+     runCmd(`ssh -i ${SSH_KEY} ${VPS_USER}@${VPS_IP} "${remoteCmd.replace(/"/g, '\\"')}"`);
