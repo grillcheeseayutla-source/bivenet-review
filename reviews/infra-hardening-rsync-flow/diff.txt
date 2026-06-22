@@ -1,0 +1,73 @@
+diff --git a/docs/FLUJO_DE_TRABAJO.md b/docs/FLUJO_DE_TRABAJO.md
+index 5cea6b4..3a1233a 100644
+--- a/docs/FLUJO_DE_TRABAJO.md
++++ b/docs/FLUJO_DE_TRABAJO.md
+@@ -6,7 +6,11 @@ Este documento explica cómo funciona la arquitectura de despliegue que hemos co
+ 
+ Hemos diseñado un sistema de integración y despliegue continuo (CI/CD) **híbrido y conservador**:
+ - **Para el Frontend (Next.js):** Se delega 100% a la integración nativa de Vercel con GitHub.
+-- **Para el Backend (VPS):** Usamos un enfoque *Patch & Backup* (Parche y Respaldo) a través de conexiones SSH/SCP seguras originadas desde tu máquina Windows, sin instalar Git ni herramientas pesadas en el servidor de producción.
++- **Para el Backend (VPS):** Usamos un enfoque de **Clon de Apoyo + Rsync**. El VPS tiene un clon git en `/home/soyrico699/bivenet-source` que actúa como puente. Se hace `git pull` en el puente y luego se inyectan los cambios a las carpetas vivas de producción mediante `rsync` excluyendo archivos sensibles.
++
++**Reglas Arquitectónicas Críticas:**
++- No se hacen `chown -R`, cambios de permisos, ni acciones globales en el VPS sin autorización explícita.
++- Los servicios no afectados por una tarea no deben tocarse ni reiniciarse bajo ninguna circunstancia (ej. `wsp-agent-v2` no se toca si la tarea solo cambia `provision-agent-v2`).
+ 
+ ---
+ 
+@@ -35,13 +39,13 @@ Cada vez que necesites desarrollar una nueva característica o arreglar un bug,
+ 
+ 1. **Aprobación:** Ejecuto `npm run flow:release <nombre-tarea>`.
+ 2. **Fusión (Merge):** El script une tus cambios a la rama `main` en tu computadora y empuja el código final a GitHub. *(Nota: En este instante, Vercel detecta el cambio en `main` y comienza a compilar el Frontend automáticamente).*
+-3. **Inyección en VPS (SCP Seguro):**
+-   - El script aísla únicamente los archivos backend que fueron modificados.
+-   - Usando `scp` (Secure Copy), transfiere silenciosamente esos archivos a una carpeta temporal en el VPS.
+-   - Se conecta por `ssh` al VPS, busca los archivos viejos que van a ser sobreescritos y crea un respaldo de seguridad (`backup-<tarea>.tar.gz`).
+-   - Mueve los archivos nuevos a sus carpetas correspondientes (`provision-agent-v2` o `wsp-agent-v2`).
+-   - Ejecuta `npm install` (si hubo cambios en dependencias) y hace un `sudo systemctl restart` **solo** del servicio que fue modificado.
+-4. **Verificación:** El script revisa el `status` del servicio en Linux. Si el agente crashea al arrancar, el script aborta y lanza una alerta roja.
++3. **Inyección en VPS (Git + Rsync):**
++   - El script se conecta por SSH al VPS y entra a la carpeta puente: `/home/soyrico699/bivenet-source`.
++   - Ejecuta `git pull origin main` para descargar el código más reciente de forma segura (usando una Deploy Key de solo lectura).
++   - Mediante `rsync`, transfiere únicamente el código de los agentes modificados desde el puente hacia las carpetas de producción reales (ej. `/home/soyrico699/provision-agent-v2/`).
++   - El `rsync` incluye exclusiones estrictas (`--exclude '.env*' --exclude 'sessions/'` etc.) para blindar los archivos vivos de producción.
++   - Ejecuta `npm install` y hace un `sudo systemctl restart` **solo** de los servicios que fueron modificados.
++4. **Verificación:** El script revisa el `status` del servicio en Linux para garantizar que siga activo después del reinicio.
+ 
+ ### Fase de Emergencia (`flow:rollback`)
+ *Si algo catastrófico ocurre en el backend después del release.*
+diff --git a/provision-agent-v2/server.mjs b/provision-agent-v2/server.mjs
+index be44ecd..3566c29 100644
+--- a/provision-agent-v2/server.mjs
++++ b/provision-agent-v2/server.mjs
+@@ -14,7 +14,6 @@ import monitoringRoutes from './modules/monitoring/monitoring.router.mjs';
+ import reportsRoutes from './modules/reports/reports.router.mjs';
+ 
+ const app = express();
+-console.log("=== ARQUITECTURA RSYNC ACTIVADA ===");
+ 
+ app.use(proxyMiddleware);
+ 
+diff --git a/scripts/flow.mjs b/scripts/flow.mjs
+index 7ae92b2..ac31af5 100644
+--- a/scripts/flow.mjs
++++ b/scripts/flow.mjs
+@@ -240,6 +240,18 @@ NO APROBADO, con correcciones necesarias.
+     process.exit(1);
+   }
+ 
++  const diff = runCmd(`git diff --name-only origin/main...origin/tarea/${arg}`, true);
++  if (!diff || diff.trim() === "") {
++    console.log(`\n✅ No hay diferencias entre origin/main y origin/tarea/${arg}. Release no necesario.`);
++    process.exit(0);
++  }
++
++  const isGitRepo = runCmd(`ssh -i ${SSH_KEY} ${VPS_USER}@${VPS_IP} "test -d ${SUPPORT_CLONE_PATH}/.git"`, true, true);
++  if (!isGitRepo) {
++    console.error(`\n❌ El clon de apoyo ${SUPPORT_CLONE_PATH} no existe o no es repo Git.\nConfigura primero la Deploy Key y clona Bivenet en el VPS.`);
++    process.exit(1);
++  }
++
+   const impact = analyzeImpact(arg);
+   
+   console.log(`\n🚀 Iniciando Release para tarea/${arg}\n`);
