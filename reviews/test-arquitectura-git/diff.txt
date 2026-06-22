@@ -1,0 +1,11 @@
+diff --git a/provision-agent-v2/server.mjs b/provision-agent-v2/server.mjs
+index 3566c29..496dcec 100644
+--- a/provision-agent-v2/server.mjs
++++ b/provision-agent-v2/server.mjs
+@@ -14,6 +14,7 @@ import monitoringRoutes from './modules/monitoring/monitoring.router.mjs';
+ import reportsRoutes from './modules/reports/reports.router.mjs';
+ 
+ const app = express();
++console.log("=== ARQUITECTURA GIT ACTIVADA ===");
+ 
+ app.use(proxyMiddleware);
