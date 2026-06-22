@@ -14,32 +14,17 @@ origin/tarea/add-flow-pr-memory
 
 ## Archivos modificados
 
-- CLAUDE.md
-- docs/ARQUITECTURA_MASTER.md
-- docs/CHECKLIST_AUDITORIA.md
-- docs/FLUJO_SUPERVISOR_OBRERO.md
-- docs/POLITICA_DEPLOY.md
-- package.json
-- scripts/flow.js
-- scripts/flow.mjs
+
 
 ## Diff stat
 
 ```
-CLAUDE.md                       |  39 ++++
- docs/ARQUITECTURA_MASTER.md     |  19 ++
- docs/CHECKLIST_AUDITORIA.md     |  13 ++
- docs/FLUJO_SUPERVISOR_OBRERO.md |  16 ++
- docs/POLITICA_DEPLOY.md         |  27 +++
- package.json                    |  10 +-
- scripts/flow.js                 | 214 -------------------
- scripts/flow.mjs                | 462 ++++++++++++++++++++++++++++++++++++++++
- 8 files changed, 582 insertions(+), 218 deletions(-)
+
 ```
 
 ## Impacto detectado
 
-- Next.js: SÍ
+- Next.js: NO
 - provision-agent-v2: NO
 - wsp-agent-v2: NO
 
