@@ -1,2 +1,0 @@
-docs/bitacora/2026-06-22-infra-git-rsync.md
-docs/bitacora/ESTADO_ACTUAL.md
