@@ -1,3 +1,0 @@
-docs/FLUJO_DE_TRABAJO.md
-provision-agent-v2/server.mjs
-scripts/flow.mjs
