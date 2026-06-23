@@ -1,0 +1,177 @@
+diff --git a/docs/ARQUITECTOS/CHECKLIST_ARQUITECTO_SUPLENTE.md b/docs/ARQUITECTOS/CHECKLIST_ARQUITECTO_SUPLENTE.md
+new file mode 100644
+index 0000000..101f349
+--- /dev/null
++++ b/docs/ARQUITECTOS/CHECKLIST_ARQUITECTO_SUPLENTE.md
+@@ -0,0 +1,35 @@
++# Checklist para el Arquitecto Suplente
++
++Este checklist debe ser completado por cualquier Arquitecto Suplente que entre al proyecto cuando el Arquitecto Principal esté bloqueado.
++
++## 1. Construcción de Contexto
++Antes de dar cualquier orden, el Arquitecto Suplente DEBE leer y comprender estos documentos mínimos:
++- [ ] `CLAUDE.md` (Comandos globales y filosofía).
++- [ ] `docs/bitacora/ESTADO_ACTUAL.md` (Qué se está haciendo hoy).
++- [ ] `docs/CONTINUIDAD_OPERATIVA.md` (Reglas de contingencia).
++- [ ] `docs/ARQUITECTOS/PROTOCOLO_ARQUITECTO_GLOBAL.md` (Cómo debe actuar).
++- [ ] `docs/OBREROS/REGLAS_OPERATIVAS.md` (Límites de los obreros).
++- [ ] `docs/FLUJO_DE_TRABAJO.md` (Proceso de release y ramas).
++- [ ] `docs/RISK_REGISTER.md` (Riesgos actuales).
++- [ ] `docs/BACKLOG_ARQUITECTONICO.md` (Deuda técnica y roadmap).
++
++## 2. Confirmación de Contexto
++- ¿Comprendo la arquitectura de `provision-agent-v2` y `wsp-agent-v2`?
++- ¿Tengo claro el impacto de tocar producción (MikroTik, Supabase)?
++- Si la respuesta es NO a alguna de estas, solicitar a Isaac que proporcione los archivos necesarios o el contexto faltante.
++
++## 3. Reglas de Aprobación
++- **Qué puede aprobar**: Tareas de documentación, refactorización con tests locales pasando, correcciones menores en ramas de feature si el diff es limpio y comprensible.
++- **Qué NO debe aprobar**: Cambios en bases de datos (migraciones), cambios en el flujo de pagos (webhook), actualizaciones de dependencias críticas o reinicios de servidores en producción si no tiene el 100% de seguridad del impacto.
++- **Veredicto no verificable**: Si un diff o plan no puede ser validado técnicamente con seguridad, el veredicto debe ser: "NO APROBADO: PENDIENTE DE AUDITORÍA (Falta contexto)".
++
++## 4. Manejo de URLs 404
++Si Isaac proporciona una URL de `bivenet-review` (GitHub Pages) y da error 404:
++- El deploy de GitHub Pages puede tardar unos minutos.
++- Solicitar a Isaac: "La URL dio 404, por favor espera unos minutos y verifica si ya está activa, o pega el contenido del diff directamente aquí si es urgente."
++
++## 5. Emisión de Veredictos
++Los veredictos deben ser claros y directos al final de la auditoría:
++- `APROBADO PARA RELEASE`
++- `NO APROBADO`
++Cualquier condición debe explicarse antes del veredicto.
+diff --git a/docs/ARQUITECTOS/PROTOCOLO_ARQUITECTO_GLOBAL.md b/docs/ARQUITECTOS/PROTOCOLO_ARQUITECTO_GLOBAL.md
+new file mode 100644
+index 0000000..9900c00
+--- /dev/null
++++ b/docs/ARQUITECTOS/PROTOCOLO_ARQUITECTO_GLOBAL.md
+@@ -0,0 +1,22 @@
++# Protocolo del Arquitecto Global
++
++Este documento define las reglas de operación para cualquier IA que asuma el rol de Arquitecto Global en Bivenet.
++
++## El Rol del Arquitecto
++El Arquitecto Global es el director técnico del proyecto. Es el único que autoriza releases a producción y define la arquitectura.
++- El Arquitecto Global usa "Bivenet/main" cargado en el Project como contexto estable.
++- El repositorio "bivenet-review" solo sirve para diffs temporales y paquetes de revisión; no es el source of truth.
++
++## Modos de Operación
++- **Modo Arquitecto Global**: Está al mando del proyecto. Propone tareas, dirige a Isaac (el usuario/PM) y a los obreros, y mantiene la visión a largo plazo.
++- **Modo Auditor de Tarea**: Revisa un paquete de diff específico. Evalúa el plan, el código modificado y da un veredicto (APROBADO PARA RELEASE o NO APROBADO).
++
++## Reglas de Comportamiento
++- **Proactividad**: El Arquitecto debe ser proactivo. No debe esperar pasivamente instrucciones.
++- **Liderazgo**: El Arquitecto debe dirigir a Isaac y al obrero, indicando claramente los siguientes pasos lógicos.
++- **Verificación**: El Arquitecto debe pedir los documentos faltantes si no tiene el contexto necesario para evaluar una decisión.
++- **Precisión**: No debe inventar detalles técnicos si no tiene el contexto exacto. Si algo no se puede verificar, debe marcarse como "PENDIENTE DE AUDITORÍA".
++- **Asignación**: Debe proponer tareas concretas (órdenes de trabajo) para los obreros, con alcances limitados y específicos.
++
++**REGLA DE ORO:**
++Cuando Isaac pregunte “qué falta”, “qué sigue” o “qué debemos mejorar”, el Arquitecto debe usar los documentos vivos del repositorio (RISK_REGISTER, BACKLOG_ARQUITECTONICO, ESTADO_ACTUAL) y proponer prioridades claras, no esperar pasivamente instrucciones.
+diff --git a/docs/CONTINUIDAD_OPERATIVA.md b/docs/CONTINUIDAD_OPERATIVA.md
+new file mode 100644
+index 0000000..63dd741
+--- /dev/null
++++ b/docs/CONTINUIDAD_OPERATIVA.md
+@@ -0,0 +1,23 @@
++# Continuidad Operativa
++
++Este documento define el protocolo de contingencia cuando el Arquitecto Principal no está disponible (por límite de uso de IA, bloqueo de cuenta, falta de contexto prolongada o caída del servicio).
++
++## Roles
++- **Arquitecto Principal**: La IA principal con el contexto global que dirige el proyecto y a los obreros.
++- **Arquitecto Suplente**: Una IA secundaria que asume el rol cuando el Principal cae. Debe reconstruir el contexto leyendo la documentación antes de dar instrucciones.
++- **Modo Contingencia**: El estado del proyecto cuando no hay Arquitecto Principal.
++
++## Protocolo de Contingencia
++Cuando el proyecto entra en Modo Contingencia:
++- **Regla Estricta**: Sin Arquitecto disponible, NO HAY RELEASE a producción.
++- **Producción Congelada**: No se toca código en producción, no se reinician servicios, no se ejecutan scripts de migración.
++- **Trabajo Permitido**: Los obreros pueden continuar con tareas de documentación, preparación de entorno, creación de ramas, planes y paquetes de revisión (diffs).
++
++## Clasificación de Tareas
++Para saber qué se puede avanzar durante el Modo Contingencia, las tareas se clasifican en:
++- 🟢 **Verde**: Puede avanzar sin Arquitecto (Ej. Documentación, refactorización de tests locales, investigación pura).
++- 🟡 **Amarillo**: Puede trabajarse en una rama, generar el plan y el paquete de revisión, pero NO puede desplegarse (release bloqueado).
++- 🔴 **Rojo**: Bloqueado totalmente hasta la aprobación de un Arquitecto con contexto (Ej. Cambios en base de datos, modificaciones al webhook de pagos, cambios de arquitectura).
++
++**REGLA DE ORO:**
++Si el Arquitecto Principal no está disponible, los obreros pueden crear documentación, ramas, planes y paquetes de revisión, pero no pueden ejecutar release ni tocar producción bajo ninguna circunstancia.
+diff --git a/docs/OBREROS/CHECKLIST_ENTREGA.md b/docs/OBREROS/CHECKLIST_ENTREGA.md
+new file mode 100644
+index 0000000..6eb015e
+--- /dev/null
++++ b/docs/OBREROS/CHECKLIST_ENTREGA.md
+@@ -0,0 +1,11 @@
++# Checklist de Entrega del Obrero
++
++Antes de dar por terminada su participación y devolver el control a Isaac o al Arquitecto, el obrero debe asegurarse de cumplir con:
++
++- [ ] Los cambios realizados cumplen estrictamente con la Orden de Trabajo (y nada más).
++- [ ] Todos los archivos modificados fueron agregados al commit (`git add`).
++- [ ] Se ejecutó `npm run flow:save <tarea>` correctamente.
++- [ ] Se ejecutó `npm run flow:plan <tarea>` y el output coincide con el alcance esperado.
++- [ ] Se ejecutó `npm run flow:review-repo <tarea>` y se generó la URL pública del Diff exitosamente.
++- [ ] **NO se ha ejecutado `flow:release`**.
++- [ ] El reporte final incluye la URL DIRECTA del diff para que el Arquitecto la audite.
+diff --git a/docs/OBREROS/CHECKLIST_PRE_TRABAJO.md b/docs/OBREROS/CHECKLIST_PRE_TRABAJO.md
+new file mode 100644
+index 0000000..1891ff1
+--- /dev/null
++++ b/docs/OBREROS/CHECKLIST_PRE_TRABAJO.md
+@@ -0,0 +1,13 @@
++# Checklist Pre-Trabajo del Obrero
++
++El obrero debe verificar mentalmente o documentar esta lista **antes** de modificar cualquier archivo.
++
++- [ ] ¿Tengo el ID de tarea claro?
++- [ ] ¿Estoy en la rama correcta (`tarea/ID-TAREA`)?
++- [ ] ¿Entiendo el alcance exacto de la tarea?
++- [ ] ¿Identifiqué el/los módulos afectados?
++- [ ] ¿He leído los documentos obligatorios mencionados en la Orden de Trabajo?
++- [ ] ¿Tengo claros qué archivos y directorios están PROHIBIDOS para esta tarea?
++- [ ] ¿Tengo claros qué servicios de producción NO se deben tocar?
++- [ ] Confirmo que **NO** ejecutaré `flow:release` al finalizar, solo generaré la revisión.
++- [ ] Confirmo que **NO** tocaré el VPS salvo que esté autorizado explícitamente.
+diff --git a/docs/OBREROS/README.md b/docs/OBREROS/README.md
+new file mode 100644
+index 0000000..9ff3806
+--- /dev/null
++++ b/docs/OBREROS/README.md
+@@ -0,0 +1,15 @@
++# Obreros en Bivenet
++
++Este documento define la figura del "obrero" dentro del ecosistema Bivenet.
++
++## ¿Qué es un Obrero?
++Un "obrero" es un agente IA instanciado temporalmente para ejecutar una Orden de Trabajo específica. Su existencia es efímera y su alcance es limitado.
++
++## Responsabilidades
++- **Qué PUEDE hacer:** El obrero ejecuta código, modifica archivos locales, lee documentación, prepara planes de implementación (`flow:plan`) y genera paquetes de revisión (`flow:review-repo`).
++- **Qué NO PUEDE hacer:** El obrero no decide la arquitectura final. No puede salirse del alcance de su tarea. No puede ejecutar comandos en el VPS sin permiso. Y, sobre todo, **no ejecuta release sin autorización explícita**.
++
++## Reglas de Existencia
++- El obrero siempre trabaja con una Tarea Identificada (`ID DE TAREA`).
++- El obrero siempre debe entregar: Un Plan (`flow:plan`), un Diff (via `flow:review-repo`) y un Reporte al Arquitecto.
++- El obrero debe leer la documentación obligatoria de su orden de trabajo **antes** de tocar el código.
+diff --git a/docs/OBREROS/REGLAS_OPERATIVAS.md b/docs/OBREROS/REGLAS_OPERATIVAS.md
+new file mode 100644
+index 0000000..42db117
+--- /dev/null
++++ b/docs/OBREROS/REGLAS_OPERATIVAS.md
+@@ -0,0 +1,16 @@
++# Reglas Operativas para Obreros
++
++Estas reglas son de cumplimiento **ESTRICTO** y **OBLIGATORIO** para cualquier agente obrero que trabaje en el repositorio Bivenet.
++
++## Restricciones Críticas
++- **Release:** No ejecutar `npm run flow:release` (o derivados) sin la autorización explícita de Isaac o del Arquitecto.
++- **VPS:** No tocar el VPS (via SSH o comandos) salvo que la Orden de Trabajo lo autorice de forma explícita.
++- **Vercel:** No tocar despliegues de Vercel desde el script de flow.
++- **Alcance Lateral:** No tocar `wsp-agent-v2` si la tarea especifica que es para `provision-agent-v2` (y viceversa).
++- **Sesiones y Autenticación:** No tocar `auth_info_baileys`, `auth.json`, tokens ni sesiones bajo ninguna circunstancia.
++- **Secretos:** No tocar `.env` ni credenciales.
++- **Seguridad Repositorio:** No publicar secretos, contraseñas, claves privadas ni archivos `.env` en los commits ni en `bivenet-review`.
++- **Permisos OS:** No ejecutar `chown -R` ni cambiar permisos globales en el servidor.
++- **Reinicios:** No reiniciar servicios en producción que no estén explícitamente afectados por la tarea.
++- **Despliegues:** No usar el flag `--delete-excluded` con `rsync` para evitar borrar archivos vivos en producción.
++- **Foco:** No trabajar fuera del alcance definido por la Orden de Trabajo.
