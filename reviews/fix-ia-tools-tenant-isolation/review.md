@@ -14,18 +14,21 @@ origin/tarea/fix-ia-tools-tenant-isolation
 
 ## Archivos modificados
 
-
+- provision-agent-v2/modules/ai/tools.diagnostic.mjs
+- provision-agent-v2/modules/ai/tools.supabase.mjs
 
 ## Diff stat
 
 ```
-
+provision-agent-v2/modules/ai/tools.diagnostic.mjs | 10 ++++++----
+ provision-agent-v2/modules/ai/tools.supabase.mjs   |  6 ++++--
+ 2 files changed, 10 insertions(+), 6 deletions(-)
 ```
 
 ## Impacto detectado
 
 - Next.js: NO
-- provision-agent-v2: NO
+- provision-agent-v2: SÍ
 - wsp-agent-v2: NO
 
 ## Resultado esperado si se aprueba release

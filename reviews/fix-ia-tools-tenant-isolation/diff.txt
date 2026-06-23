@@ -1,0 +1,56 @@
+diff --git a/provision-agent-v2/modules/ai/tools.diagnostic.mjs b/provision-agent-v2/modules/ai/tools.diagnostic.mjs
+index 4c76891..a6e03f5 100644
+--- a/provision-agent-v2/modules/ai/tools.diagnostic.mjs
++++ b/provision-agent-v2/modules/ai/tools.diagnostic.mjs
+@@ -69,12 +69,14 @@ export async function ejecutarDiagnosticoCliente(args) {
+ /**
+  * Obtiene la lista de Access Points (antenas emisoras) registrados en el sistema.
+  */
+-export async function obtenerAPs() {
++export async function obtenerAPs(args) {
++  const { tenantContext } = args;
+   console.log('[AI TOOL] Ejecutando obtenerAPs');
+   try {
+     const { data, error } = await supabase
+       .from('access_points')
+-      .select('id, name, ip_address, router_id');
++      .select('id, name, ip_address, router_id')
++      .eq('wisp_id', tenantContext.wispId);
+     if (error) throw error;
+     return { success: true, accessPoints: data || [] };
+   } catch (error) {
+@@ -84,11 +86,11 @@ export async function obtenerAPs() {
+ }
+ 
+ export async function obtenerClientesAP(args) {
+-  const { apId } = args;
++  const { tenantContext, apId } = args;
+   console.log(`[AI TOOL] Obteniendo clients del AP: ${apId}`);
+   try {
+     const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(apId);
+-    let query = supabase.from('access_points').select('*');
++    let query = supabase.from('access_points').select('*').eq('wisp_id', tenantContext.wispId);
+     if (isUuid) {
+       query = query.eq('id', apId);
+     } else {
+diff --git a/provision-agent-v2/modules/ai/tools.supabase.mjs b/provision-agent-v2/modules/ai/tools.supabase.mjs
+index 8dd0267..6a6bf49 100644
+--- a/provision-agent-v2/modules/ai/tools.supabase.mjs
++++ b/provision-agent-v2/modules/ai/tools.supabase.mjs
+@@ -362,12 +362,14 @@ export async function obtenerPlanesHotspot(args) {
+ /**
+  * Obtiene el listado de planes residenciales (ISP) configurados en el sistema.
+  */
+-export async function obtenerPlanesIsp() {
++export async function obtenerPlanesIsp(args) {
++  const { tenantContext } = args;
+   console.log('[AI TOOL] Ejecutando obtenerPlanesIsp');
+   try {
+     const { data, error } = await supabase
+       .from('isp_plans')
+-      .select('id, name, rate_limit, price');
++      .select('id, name, rate_limit, price')
++      .eq('wisp_id', tenantContext.wispId);
+     if (error) throw error;
+     return { success: true, plans: data || [] };
+   } catch (error) {
