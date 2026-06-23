@@ -1,0 +1,72 @@
+diff --git a/app/api/webhooks/mikrotik/route.ts b/app/api/webhooks/mikrotik/route.ts
+index 01e9a74..d53b988 100644
+--- a/app/api/webhooks/mikrotik/route.ts
++++ b/app/api/webhooks/mikrotik/route.ts
+@@ -12,16 +12,17 @@ export async function POST(req: Request) {
+   try {
+     const body = await req.json()
+     const { pin, mac, wispId, routerId } = body
+-    if (!pin) {
+-      return NextResponse.json({ error: "Falta el PIN de la ficha" }, { status: 400 })
++    if (!pin || !wispId) {
++      return NextResponse.json({ error: "Falta el PIN o wispId" }, { status: 400 })
+     }
+     let selectQuery = supabase
+       .from("hotspot_vouchers")
+       .select("id, status, wisp_id, plan_id")
+       .eq("username", pin)
++      .eq("wisp_id", wispId)
+ 
+-    if (wispId && routerId) {
+-      selectQuery = selectQuery.eq("wisp_id", wispId).eq("router_id", routerId)
++    if (routerId) {
++      selectQuery = selectQuery.eq("router_id", routerId)
+     }
+ 
+     const { data: voucher, error: selectError } = await selectQuery.single()
+@@ -42,6 +43,7 @@ export async function POST(req: Request) {
+       .from("hotspot_vouchers")
+       .update({ status: "sold" })
+       .eq("id", voucher.id)
++      .eq("wisp_id", voucher.wisp_id)
+ 
+     if (updateError) {
+       console.error("[Webhook MikroTik] Error al actualizar estado a sold:", updateError)
+diff --git a/docs/RISK_REGISTER.md b/docs/RISK_REGISTER.md
+index d859a30..e376253 100644
+--- a/docs/RISK_REGISTER.md
++++ b/docs/RISK_REGISTER.md
+@@ -16,7 +16,7 @@
+ 
+ | ID | Descripción | Severidad | Módulo | Estado | Tarea sugerida |
+ |----|-------------|-----------|--------|--------|----------------|
+-| R-01 | **Race condition en deduplicación de mensajes WhatsApp.** El check LRU + insert en DB no es atómico. Dos mensajes concurrentes pueden pasar simultáneamente y ambos llaman a la IA, duplicando respuestas y costos. | CRÍTICO | `wsp-agent-v2/src/event.handlers.mjs` | EN_PROCESO | Implementar UNIQUE INDEX en `wsp_processed_messages(wisp_id, message_id)` para hacer el insert idempotente a nivel DB. |
++| R-01 | **Race condition en deduplicación de mensajes WhatsApp.** El check LRU + insert en DB no es atómico. Dos mensajes concurrentes pueden pasar simultáneamente y ambos llaman a la IA, duplicando respuestas y costos. | CRÍTICO | `wsp-agent-v2/src/event.handlers.mjs` | RESUELTO | Tabla `wsp_processed_messages` creada con `UNIQUE (wisp_id, message_id)`. |
+ | R-02 | **Loop infinito de IA → WhatsApp.** El agente IA puede responder enviando un mensaje, que regresa como nuevo evento al webhook, generando un loop de respuestas con costo creciente de Gemini. | CRÍTICO | `wsp-agent-v2/src/event.handlers.mjs`, `provision-agent-v2/modules/webhook/webhook.router.mjs` | ABIERTO | Guardar IDs de mensajes salientes (`lastOutgoingMessageIds`) por sesión. Filtrar en `isMessageDuplicate`. |
+ | R-03 | **`process.exit(2)` en el watchdog de monitoring.** Si Supabase falla durante la actualización de un router offline, el proceso provision-agent-v2 termina, dejando todos los WISPs sin backend. | CRÍTICO | `provision-agent-v2/modules/monitoring/monitoring.service.mjs:51` | ABIERTO | Reemplazar `process.exit(2)` por log de error + reintento en el siguiente ciclo. Agregar circuit breaker de Supabase. |
+ | R-04 | **Firebase Admin SDK activo en boot aunque ningún endpoint del panel moderno lo usa.** `reports.service.mjs`, `consume.service.mjs`, `refund.service.mjs` tienen endpoints registrados en server.mjs pero sin callers desde `app/**`. El panel moderno ya usa Supabase para todo. Firebase solo podría activarse desde MikroTiks con scripts on-login legacy. Sin embargo `core/firestore.mjs` se inicializa en cada boot consumiendo credencial y tiempo de cold-start. | ALTO | `provision-agent-v2/modules/reports/`, `modules/hotspot/consume.service.mjs`, `core/firestore.mjs` | ABIERTO | Verificar que no hay MikroTiks con scripts legacy (on-login apuntando a provision-agent). Si confirmado: eliminar el bloque Firebase completo. No es "migrar" sino eliminar código muerto. |
+@@ -27,7 +27,7 @@
+ | R-09 | **Contador `activeWebhooksCount` global puede desbalancearse.** Si una promesa truena fuera del try/catch, el contador queda en 50 y bloquea todos los WISPs. (Nota: ya existe `webhookCounters` por WISP en event.handlers, pero el contador global es frágil.) | ALTO | `wsp-agent-v2/src/event.handlers.mjs` | EN_PROCESO | Usar librería de semáforo real (`p-limit`, `p-queue`) en lugar de contador manual. |
+ | R-10 | **`qrcode-terminal` activo en producción.** Llena logs de systemd con QR ASCII en producción multi-tenant, consume stdout y puede ralentizar el proceso. | MEDIO | `wsp-agent-v2/src/event.handlers.mjs:5` | ABIERTO | Envolver con `if (process.env.NODE_ENV !== 'production')`. |
+ | R-11 | **Monkey-patch frágil sobre RouterOS v7.** El patch sobre `processPacket` y `sendTagData` de `node-routeros` puede romperse con cualquier upgrade de la librería sin warning ni tests. | ALTO | `provision-agent-v2/core/routeros.mjs` | DOCUMENTADO_SIN_ACCIÓN | Reportar bug upstream o hacer fork controlado de la librería. Agregar tests de regresión. |
+-| R-12 | **Tabla `wsp_processed_messages` sin TTL garantizado.** El maintenance.manager limpia cada 24h, pero si el proceso está caído por más de 24h, la tabla crece sin límite. Sin RLS por wisp_id en inserts. | MEDIO | `wsp-agent-v2/src/maintenance.manager.mjs`, Supabase | ABIERTO | Agregar `pg_cron` job en Supabase como respaldo. Verificar que inserts tienen wisp_id siempre. |
++| R-12 | **Tabla `wsp_processed_messages` sin TTL garantizado.** El maintenance.manager limpia cada 24h, pero si el proceso está caído por más de 24h, la tabla crece sin límite. Sin RLS por wisp_id en inserts. | MEDIO | `wsp-agent-v2/src/maintenance.manager.mjs`, Supabase | RESUELTO | Tabla creada con RLS. Pendiente añadir TTL (`pg_cron`) a largo plazo. |
+ | R-13 | **Sin fila `wisp_id` consistente en client_invoices.** Algunas queries sobre `client_invoices` no filtran por `wisp_id` explícito (filtran por `client_id`). Riesgo de cross-tenant data leak si RLS no está activo en esa tabla. | ALTO | `provision-agent-v2/modules/ai/tools.supabase.mjs:217-230` | ABIERTO | Verificar que RLS con `wisp_id` está activo en `client_invoices`. Agregar `.eq('wisp_id', wispId)` en queries sin él. |
+ | R-14 | **Contexto de IA sólo en RAM.** `context.manager.mjs` guarda el historial de conversación en `sessionHistories` Map. Si el proceso reinicia, todo el contexto se pierde. Multi-instancia es imposible sin persistencia. | MEDIO | `provision-agent-v2/modules/ai/context.manager.mjs` | DOCUMENTADO_SIN_ACCIÓN | Persistir historial en Supabase (tabla `ai_conversations` o similar) para sobrevivir reinicios. |
+ | R-15 | **Firebase Admin SDK con `applicationDefault()` se inicializa aunque nadie lo use.** Si la credencial `GOOGLE_APPLICATION_CREDENTIALS` expira, provision-agent-v2 puede fallar en boot. Pero dado que ningún endpoint del panel moderno llama a Firebase, el impacto operacional real es solo el cold-start. | MEDIO | `provision-agent-v2/core/firestore.mjs` | ABIERTO | La acción correcta es eliminar Firebase completamente (ver R-04), no "monitorear su expiración". Riesgo de fallo en boot si credential expira mientras el módulo sigue importado. |
+@@ -36,10 +36,11 @@
+ | R-18 | **VPS IP hardcodeada en flow.mjs.** `VPS_IP = "34.173.151.127"` está en el código fuente. Cualquier cambio de IP de VPS requiere modificar y committear este archivo. | BAJO | `scripts/flow.mjs:4` | DOCUMENTADO_SIN_ACCIÓN | Mover a variable de entorno o config local no commiteada. |
+ | R-19 | **Sin tracing distribuido entre servicios.** No existe correlación de requestId entre provision-agent-v2 y wsp-agent-v2. Debugging de flujos cross-service es manual y propenso a errores. | MEDIO | Arquitectura global | ABIERTO | Propagar `x-request-id` header en todas las llamadas inter-servicio. |
+ | R-20 | **`Promise.race()` en reconexión no cancela el socket real.** Cuando el timeout de `createSocket()` dispara, la Promise se ignora pero el socket puede seguir vivo, generando memory leaks y listeners duplicados. | ALTO | `wsp-agent-v2/src/session.manager.mjs` | ABIERTO | Implementar AbortController interno en createSocket o registro de sockets pendientes para limpieza. |
+-| R-21 | **Webhook MikroTik es endpoint público sin autenticación.** `app/api/webhooks/mikrotik/route.ts` no valida ningún API key ni token. Cualquier actor puede enviar voucher IDs falsos, forzando marcado de vouchers como `sold` sin pago real. | CRÍTICO | `app/api/webhooks/mikrotik/route.ts` | ABIERTO | Agregar validación de secret compartido (`X-MikroTik-Secret` header o query param). Validar que el router origen es conocido antes de actualizar vouchers. |
+-| R-22 | **UPDATE de `hotspot_vouchers` en webhook sin `wisp_id`.** La query de actualización en `route.ts:42-44` usa solo `.eq("id", voucher.id)`. Un voucher ID de otro WISP podría ser marcado como vendido por un webhook de MikroTik de otro tenant. | ALTO | `app/api/webhooks/mikrotik/route.ts:42-44` | ABIERTO | Agregar `.eq("wisp_id", wispId)` en el UPDATE. Siempre requerir `wispId` en el body del webhook. |
+-| R-23 | **`obtenerPlanesIsp()` sin filtro `wisp_id`.** La herramienta IA `obtenerPlanesIsp` en `tools.supabase.mjs:363-377` devuelve TODOS los planes ISP de todos los WISPs. Un WISP puede ver planes de otro WISP vía chat de IA. | ALTO | `provision-agent-v2/modules/ai/tools.supabase.mjs:363-377` | ABIERTO | Agregar `.eq('wisp_id', wispId)` en la query de `isp_plans`. |
+-| R-24 | **`obtenerAPs()` y `obtenerClientesAP()` sin filtro `wisp_id`.** Las herramientas de diagnóstico en `tools.diagnostic.mjs:75-92` no filtran por `wisp_id`. Un WISP puede ver antenas y clientes conectados de otro WISP vía IA. | ALTO | `provision-agent-v2/modules/ai/tools.diagnostic.mjs:75-92` | ABIERTO | Agregar `.eq('wisp_id', wispId)` en todas las queries de `access_points`. |
++| R-21 | **Webhook MikroTik es endpoint público sin autenticación.** `app/api/webhooks/mikrotik/route.ts` no valida ningún API key ni token. Cualquier actor puede enviar voucher IDs falsos, forzando marcado de vouchers como `sold` sin pago real. | CRÍTICO | `app/api/webhooks/mikrotik/route.ts` | EN_PROCESO | RLS activado. Queda pendiente validación de secret compartido (`X-MikroTik-Secret` header o query param). |
++| R-22 | **UPDATE de `hotspot_vouchers` en webhook sin `wisp_id`.** La query de actualización en `route.ts:42-44` usa solo `.eq("id", voucher.id)`. Un voucher ID de otro WISP podría ser marcado como vendido por un webhook de MikroTik de otro tenant. | ALTO | `app/api/webhooks/mikrotik/route.ts:42-44` | EN_PROCESO | Mitigado por RLS (Fase 1), pero el código fuente aún debería incluir el filtro `.eq("wisp_id", wispId)` por Defense in Depth. |
++| R-23 | **`obtenerPlanesIsp()` sin filtro `wisp_id`.** La herramienta IA `obtenerPlanesIsp` en `tools.supabase.mjs:363-377` devuelve TODOS los planes ISP de todos los WISPs. Un WISP puede ver planes de otro WISP vía chat de IA. | ALTO | `provision-agent-v2/modules/ai/tools.supabase.mjs:363-377` | EN_PROCESO | Parcialmente mitigado por RLS (Fase 1), pendiente activar RLS en `isp_plans` (Fase 2) y filtro en código. |
++| R-24 | **`obtenerAPs()` y `obtenerClientesAP()` sin filtro `wisp_id`.** Las herramientas de diagnóstico en `tools.diagnostic.mjs:75-92` no filtran por `wisp_id`. Un WISP puede ver antenas y clientes conectados de otro WISP vía IA. | ALTO | `provision-agent-v2/modules/ai/tools.diagnostic.mjs:75-92` | EN_PROCESO | Mitigado por RLS (Fase 1) en `access_points`, pero el código fuente debería incluir `.eq('wisp_id', wispId)` explícitamente. |
+ | R-25 | **`hotspot_sales` ausente del inventario inicial — tabla activa no documentada.** La tabla `hotspot_sales` es usada por el dashboard de KPIs (6 queries en `dashboard.ts`), el webhook MikroTik (INSERT) y las acciones hotspot (DELETE en purge). No estaba en el inventario de tablas original. | MEDIO | `app/actions/dashboard.ts`, `app/api/webhooks/mikrotik/route.ts`, `app/actions/hotspot.ts` | RESUELTO | Tabla documentada en INVENTARIO_TABLAS_SUPABASE.md. Verificar que RLS con `wisp_id` está activo. |
+ | R-26 | **`modules/hotspot/hotspot.controller.mjs` marcado DEPRECATED pero sigue activo.** El archivo tiene comentario `[LEGACY DEPRECATED]` pero es importado por `hotspot.router.mjs` → `server.mjs`. Las funciones `consume` y `refund` de este controller activan `consume.service.mjs` y `refund.service.mjs` que usan Firebase Firestore. | ALTO | `provision-agent-v2/modules/hotspot/hotspot.controller.mjs`, `hotspot.router.mjs` | ABIERTO | No eliminar hasta migrar consume/refund a Supabase (ARCH-005). El comentario DEPRECATED es engañoso — no es zombie, está activo. |
+ | R-27 | **ADMIN_USER_ID hardcodeado en frontend y backend.** El UUID `fc6c9651-7675-4044-8df7-d65e6de157c2` está quemado en `header.tsx`, `sidebar.tsx` y `app/actions/observability.ts`. | CRÍTICO | `components/dashboard/header.tsx`, `app/actions/observability.ts` | ABIERTO | Si otro WISP debe ser superadmin, requerirá modificar el código fuente. Migrar a una columna `is_superadmin` en la tabla `wisps` o implementar un esquema real de RBAC. |
++| R-28 | **Tablas faltantes de RLS (Fase 2).** La Fase 1 protegió 9 tablas críticas, pero quedaron pendientes por RLS: `installation_jobs`, `isp_plans`, `diagnostic_sessions`, `diagnostic_events`, y `ai_pending_confirmations`. | ALTO | Base de Datos | ABIERTO | Aplicar políticas RLS de `tenant_isolation` sobre estas 5 tablas. |
