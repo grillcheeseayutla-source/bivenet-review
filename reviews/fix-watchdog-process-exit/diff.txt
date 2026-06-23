@@ -1,0 +1,27 @@
+diff --git a/provision-agent-v2/modules/monitoring/monitoring.controller.mjs b/provision-agent-v2/modules/monitoring/monitoring.controller.mjs
+index a66320e..296a137 100644
+--- a/provision-agent-v2/modules/monitoring/monitoring.controller.mjs
++++ b/provision-agent-v2/modules/monitoring/monitoring.controller.mjs
+@@ -29,7 +29,7 @@ export async function pingRouterHandler(req, res) {
+     if (error || !r) {
+       if (error && error.code !== 'PGRST116') {
+         console.error('[SUPABASE] Error en pingRouterHandler select:', error.message);
+-        process.exit(2);
++        return res.status(500).json({ error: 'database_error', detail: error.message });
+       }
+       return res.status(404).json({ online: false });
+     }
+diff --git a/provision-agent-v2/modules/monitoring/monitoring.service.mjs b/provision-agent-v2/modules/monitoring/monitoring.service.mjs
+index e1423d9..cb517f9 100644
+--- a/provision-agent-v2/modules/monitoring/monitoring.service.mjs
++++ b/provision-agent-v2/modules/monitoring/monitoring.service.mjs
+@@ -44,7 +44,8 @@ export function startWatchdogSystem() {
+ 
+           if (error) {
+             console.error(`[WATCHDOG] Error al marcar router ${routerId} offline en Supabase:`, error.message);
+-            process.exit(2);
++            // No matar el proceso — el router se reintentará en el siguiente ciclo
++            return;
+           }
+ 
+           routerLastSeenMap.delete(routerId);

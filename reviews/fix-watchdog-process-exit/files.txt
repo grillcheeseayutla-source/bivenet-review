@@ -1,0 +1,2 @@
+provision-agent-v2/modules/monitoring/monitoring.controller.mjs
+provision-agent-v2/modules/monitoring/monitoring.service.mjs
