@@ -1,0 +1,26 @@
+diff --git a/app/api/webhooks/mikrotik/route.ts b/app/api/webhooks/mikrotik/route.ts
+index d53b988..35c572b 100644
+--- a/app/api/webhooks/mikrotik/route.ts
++++ b/app/api/webhooks/mikrotik/route.ts
+@@ -15,6 +15,21 @@ export async function POST(req: Request) {
+     if (!pin || !wispId) {
+       return NextResponse.json({ error: "Falta el PIN o wispId" }, { status: 400 })
+     }
++
++    if (routerId) {
++      const { data: router, error: routerError } = await supabase
++        .from("routers")
++        .select("id, wisp_id")
++        .eq("id", routerId)
++        .eq("wisp_id", wispId)
++        .single()
++
++      if (routerError || !router) {
++        console.error(`[Webhook MikroTik] Intento no autorizado desde router: ${routerId} WISP: ${wispId}`)
++        return NextResponse.json({ error: "Router no autorizado" }, { status: 403 })
++      }
++    }
++
+     let selectQuery = supabase
+       .from("hotspot_vouchers")
+       .select("id, status, wisp_id, plan_id")
