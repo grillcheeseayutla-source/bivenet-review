@@ -1,0 +1,451 @@
+diff --git a/docs/MODULOS/WSP_AGENT_V2_DOC.md b/docs/MODULOS/WSP_AGENT_V2_DOC.md
+new file mode 100644
+index 0000000..e3c75df
+--- /dev/null
++++ b/docs/MODULOS/WSP_AGENT_V2_DOC.md
+@@ -0,0 +1,100 @@
++# Documentación del Módulo: wsp-agent-v2 (WhatsApp Backend)
++
++**Última actualización:** 2026-06-23
++**Estado:** Activo / En Producción (Con mejoras pendientes)
++
++---
++
++## 1. Visión General
++
++`wsp-agent-v2` es el microservicio encargado de gestionar las conexiones de WhatsApp para múltiples inquilinos (Multi-Tenant WISP). Utiliza la librería **Baileys** (`@whiskeysockets/baileys`) bajo el capó para interactuar con el protocolo de WhatsApp Web.
++
++El objetivo principal de este módulo es aislar la complejidad, la inestabilidad inherente y el alto consumo de recursos que genera el protocolo de WhatsApp Web, separándolo del backend principal (`provision-agent-v2` / Next.js).
++
++### Responsabilidades Clave:
++*   Gestión concurrente de múltiples sesiones de WhatsApp (hasta 200 por defecto).
++*   Autenticación persistente en base de datos PostgreSQL (Supabase).
++*   Enrutamiento de mensajes entrantes mediante Webhooks hacia el agente principal.
++*   Envío de mensajes salientes a petición del panel o del agente de IA.
++*   Reconexión resiliente frente a caídas de red o desconexiones del servidor de Meta.
++*   Aislamiento de inquilinos (Tenant Isolation) basado en `wispId`.
++
++---
++
++## 2. Arquitectura de Archivos y Componentes
++
++| Archivo | Responsabilidad Principal |
++| :--- | :--- |
++| **`server.mjs`** | Punto de entrada. Levanta el servidor Express en el puerto 3001, monitorea el *Event Loop Lag* y la memoria, y orquesta el *Graceful Shutdown* global. |
++| **`session.manager.mjs`** | Motor principal de sesiones. Mantiene el `Map` en memoria de *sockets* activos, gestiona el *Idle Timeout* para liberar recursos de sesiones inactivas, implementa *Lazy Loading* (carga perezosa) y maneja la destrucción segura de sockets. |
++| **`event.handlers.mjs`** | Escucha y procesa eventos de Baileys (`messages.upsert`, `connection.update`). Implementa una doble capa de idempotencia (LRU Cache + Supabase) para evitar mensajes duplicados y reenvía los eventos al webhook del agente principal. |
++| **`database.auth.mjs`** | Adaptador de autenticación personalizado. Intercepta la lectura/escritura de credenciales de Baileys y las sincroniza con Supabase (`wsp_session_keys`). Utiliza una técnica de *Flush Híbrido* (Coalescing de 10s) para optimizar escrituras masivas a BD. |
++| **`reconnect.manager.mjs`** | Controlador de reconexiones. Implementa *Exponential Backoff* con *Jitter* y un *Circuit Breaker* básico. Identifica errores fatales (como cierres de sesión remotos) para detener la reconexión y destruir la sesión adecuadamente. |
++| **`outbound.service.mjs`** | Router de Express que expone la API REST para el panel o el agente. Permite enviar mensajes (`/send-message`), despertar sesiones (`/wake`), chequear salud (`/health`) y forzar desvinculaciones (`/logout-session`). |
++| **`socket.factory.mjs`** | Fábrica responsable de instanciar el socket de Baileys puro vinculándolo con el estado de autenticación correspondiente a su `wispId`. |
++
++---
++
++## 3. Flujos de Datos Principales
++
++### A. Flujo de Recepción de Mensajes (Inbound)
++1.  **WhatsApp / Meta** empuja un mensaje al socket de Baileys.
++2.  **`event.handlers.mjs`** captura el evento `messages.upsert`.
++3.  Se filtra: se ignoran mensajes del bot mismo, vacíos o gigantes (>4000 chars).
++4.  **Idempotencia:** Se consulta la caché LRU (Capa 1) y luego Supabase `wsp_processed_messages` (Capa 2) para verificar que el mensaje no sea un duplicado de un reinicio anterior.
++5.  Si es nuevo, se envía un `POST` al Webhook Principal (`MAIN_AGENT_WEBHOOK`) con un timeout estricto de 15 segundos y limitador de concurrencia por WISP.
++
++### B. Flujo de Envío de Mensajes (Outbound)
++1.  **El Agente (IA) o el Panel** llama al endpoint `POST /api/send-message`.
++2.  **`outbound.service.mjs`** intercepta la petición.
++3.  Solicita el socket a **`session.manager.mjs`** vía `lazyLoadSession`. Si el socket no existe en RAM pero sí en BD, lo levanta bajo demanda.
++4.  Se ejecuta `sock.sendMessage()` con un `Promise.race` (timeout de 15 segundos) para evitar colgar la respuesta HTTP si el socket está congelado.
++5.  Retorna el `messageId` original.
++
++### C. Flujo de Autenticación Híbrida (Base de Datos)
++1.  Al instanciar un socket, **`database.auth.mjs`** descarga las credenciales iniciales de Supabase de manera síncrona.
++2.  Cuando Baileys necesita actualizar llaves criptográficas (que ocurre docenas de veces por segundo en grupos o chats grandes), se almacenan en un `pendingKeys` en RAM.
++3.  Un temporizador (`flushTimer`) de 10 segundos recolecta todos esos cambios y hace un único `UPSERT` masivo a Supabase (`wsp_session_keys`). Si el contenedor muere repentinamente, `server.mjs` invoca un *Flush Forzado* durante el *Graceful Shutdown*.
++
++---
++
++## 4. Deuda Técnica y Backlog de Arquitectura (Known Issues)
++
++Este módulo es funcional y soporta multi-inquilinos, pero requiere las siguientes intervenciones críticas para alcanzar un grado 100% *Enterprise-Ready*:
++
++> [!WARNING]
++> **1. Race Condition en Idempotencia (`event.handlers.mjs`)**
++> Dos mensajes idénticos que lleguen al mismo milisegundo pueden atravesar el bloque `if` del LRU antes de que la BD o la RAM registre el primero.
++> *Solución sugerida:* Implementar lógica *Insert First* contra la BD o asegurar un *Unique Index* estricto a nivel Supabase en `wsp_processed_messages`.
++
++> [!IMPORTANT]
++> **2. Riesgo de Sesiones Zombis (`reconnect.manager.mjs` y `session.manager.mjs`)**
++> Existe una *Race Condition* entre la destrucción manual de una sesión (`destroySession`) y un temporizador pendiente (`setTimeout`) de reconexión de `reconnect.manager.mjs`. Si la reconexión se dispara después de destruir, la sesión revivirá en memoria sin estar controlada.
++> *Solución sugerida:* Implementar identificadores de "generación" de sesión (`instanceId = crypto.randomUUID()`) para validar que la reconexión pertenezca a la instancia actual válida.
++
++> [!TIP]
++> **3. Contadores de Webhooks (`event.handlers.mjs`)**
++> El control actual utiliza contadores manuales (`webhookCounters.get`) incrementados y decrementados. Esto es propenso a desbalances si hay excepciones atípicas.
++> *Solución sugerida:* Reemplazar con una cola de promesas controlada como `p-limit` o `p-queue`.
++
++> [!NOTE]
++> **4. Anti-loop de Inteligencia Artificial**
++> No hay un mecanismo nativo en `wsp-agent-v2` para detectar si el mensaje que llegó fue causado por un bot propio en otro dispositivo vinculado.
++> *Solución sugerida:* Guardar un array en memoria de los últimos `messageIds` despachados por IA para ignorarlos proactivamente.
++
++> [!WARNING]
++> **5. Tormenta de Reconexiones Masiva (Thundering Herd)**
++> En caso de una pérdida global de red en el VPS, las 200 sesiones intentarán reconectarse simultáneamente cuando vuelva el internet, lo que podría provocar bloqueos de IP por parte de Meta o saturar el CPU.
++> *Solución sugerida:* Implementar una cola global estricta para despachar reconexiones en lotes, además del Jitter actual.
++
++---
++
++## 5. Glosario de Variables de Entorno
++
++| Variable | Descripción |
++| :--- | :--- |
++| `PORT` | Puerto del servidor Express (Default 3001) |
++| `MAIN_AGENT_WEBHOOK` | Endpoint hacia donde se empujan los mensajes entrantes. |
++| `API_KEY` | Clave estática para securizar la comunicación entre el core y este agente. |
++| `WSP_SESSION_DIR` | Directorio local donde se guardan sesiones en disco (para migraciones/legacy). |
++| `SUPABASE_URL` & `SUPABASE_KEY` | Credenciales de conexión a la base de datos PostgreSQL principal. |
+diff --git a/wsp-agent-v2/package-lock.json b/wsp-agent-v2/package-lock.json
+index b403778..4c6faf3 100644
+--- a/wsp-agent-v2/package-lock.json
++++ b/wsp-agent-v2/package-lock.json
+@@ -13,6 +13,7 @@
+         "@whiskeysockets/baileys": "^6.6.0",
+         "dotenv": "^16.0.3",
+         "express": "^4.18.2",
++        "p-limit": "^7.3.0",
+         "pino": "^8.19.0",
+         "pino-pretty": "^10.3.1",
+         "qrcode-terminal": "^0.12.0",
+@@ -2054,6 +2055,21 @@
+         "wrappy": "1"
+       }
+     },
++    "node_modules/p-limit": {
++      "version": "7.3.0",
++      "resolved": "https://registry.npmjs.org/p-limit/-/p-limit-7.3.0.tgz",
++      "integrity": "sha512-7cIXg/Z0M5WZRblrsOla88S4wAK+zOQQWeBYfV3qJuJXMr+LnbYjaadrFaS0JILfEDPVqHyKnZ1Z/1d6J9VVUw==",
++      "license": "MIT",
++      "dependencies": {
++        "yocto-queue": "^1.2.1"
++      },
++      "engines": {
++        "node": ">=20"
++      },
++      "funding": {
++        "url": "https://github.com/sponsors/sindresorhus"
++      }
++    },
+     "node_modules/parseurl": {
+       "version": "1.3.3",
+       "resolved": "https://registry.npmjs.org/parseurl/-/parseurl-1.3.3.tgz",
+@@ -2726,6 +2742,18 @@
+           "optional": true
+         }
+       }
++    },
++    "node_modules/yocto-queue": {
++      "version": "1.2.2",
++      "resolved": "https://registry.npmjs.org/yocto-queue/-/yocto-queue-1.2.2.tgz",
++      "integrity": "sha512-4LCcse/U2MHZ63HAJVE+v71o7yOdIe4cZ70Wpf8D/IyjDKYQLV5GD46B+hSTjJsvV5PztjvHoU580EftxjDZFQ==",
++      "license": "MIT",
++      "engines": {
++        "node": ">=12.20"
++      },
++      "funding": {
++        "url": "https://github.com/sponsors/sindresorhus"
++      }
+     }
+   }
+ }
+diff --git a/wsp-agent-v2/package.json b/wsp-agent-v2/package.json
+index 5930381..7186ef6 100644
+--- a/wsp-agent-v2/package.json
++++ b/wsp-agent-v2/package.json
+@@ -21,6 +21,7 @@
+     "@whiskeysockets/baileys": "^6.6.0",
+     "dotenv": "^16.0.3",
+     "express": "^4.18.2",
++    "p-limit": "^7.3.0",
+     "pino": "^8.19.0",
+     "pino-pretty": "^10.3.1",
+     "qrcode-terminal": "^0.12.0",
+diff --git a/wsp-agent-v2/src/event.handlers.mjs b/wsp-agent-v2/src/event.handlers.mjs
+index e2ceac5..5088da7 100644
+--- a/wsp-agent-v2/src/event.handlers.mjs
++++ b/wsp-agent-v2/src/event.handlers.mjs
+@@ -10,74 +10,70 @@ const API_KEY = process.env.API_KEY || '';
+ 
+ import { supabase } from './supabase.client.mjs';
+ 
+-// Cache LRU simplificado en memoria (Capa 1 de Idempotencia)
+-const messageCacheLRU = new Map();
+-const MAX_LRU_SIZE = 1000;
++import pLimit from 'p-limit';
++
++// Cache LRU en memoria por WISP (Capa 1 de Idempotencia)
++const wispMessageCaches = new Map();
++const MAX_LRU_PER_WISP = 50;
+ const MESSAGE_TTL = 10 * 60 * 1000; // 10 minutos de TTL para memoria
+ 
+-const webhookCounters = new Map();
++const webhookLimits = new Map();
+ const MAX_WEBHOOKS_PER_WISP = 5;
+ 
++function getWebhookLimit(wispId) {
++  if (!webhookLimits.has(wispId)) {
++    webhookLimits.set(wispId, pLimit(MAX_WEBHOOKS_PER_WISP));
++  }
++  return webhookLimits.get(wispId);
++}
++
+ setInterval(cleanCacheTTL, 60000);
+ 
+ // Feature Flags (Control de Funcionalidades Futuras)
+ const ENABLE_GROUP_FEATURES = false; // Cambiar a true cuando se quiera habilitar la interacción del bot en grupos
+ 
+-let cleanupIterator = null;
+ function cleanCacheTTL() {
+   const now = Date.now();
+-  const CLEAN_BATCH_SIZE = 500;
+-  let iterations = 0;
+-
+-  if (!cleanupIterator) {
+-    cleanupIterator = messageCacheLRU.entries();
+-  }
+-
+-  while (iterations < CLEAN_BATCH_SIZE) {
+-    const next = cleanupIterator.next();
+-    if (next.done) {
+-      cleanupIterator = null;
+-      break;
++  for (const [wispId, cacheMap] of wispMessageCaches.entries()) {
++    for (const [messageId, timestamp] of cacheMap.entries()) {
++      if (now - timestamp > MESSAGE_TTL) {
++        cacheMap.delete(messageId);
++      }
+     }
+-    const [key, timestamp] = next.value;
+-    if (now - timestamp > MESSAGE_TTL) {
+-      messageCacheLRU.delete(key);
++    if (cacheMap.size === 0) {
++      wispMessageCaches.delete(wispId);
+     }
+-    iterations++;
+   }
+ }
+ 
+ async function isMessageDuplicate(wispId, messageId) {
+-  const globalKey = `${wispId}:${messageId}`;
++  if (!wispMessageCaches.has(wispId)) {
++    wispMessageCaches.set(wispId, new Map());
++  }
++  const cacheMap = wispMessageCaches.get(wispId);
+   
+   // Capa 1: LRU Memory
+-  if (messageCacheLRU.has(globalKey)) {
++  if (cacheMap.has(messageId)) {
+     // Reordenar para comportarse como LRU real
+-    const timestamp = messageCacheLRU.get(globalKey);
+-    messageCacheLRU.delete(globalKey);
+-    messageCacheLRU.set(globalKey, timestamp);
++    const timestamp = cacheMap.get(messageId);
++    cacheMap.delete(messageId);
++    cacheMap.set(messageId, timestamp);
+     return true;
+   }
+   
+   // Agregar al LRU
+-  messageCacheLRU.set(globalKey, Date.now());
+-  if (messageCacheLRU.size > MAX_LRU_SIZE) {
+-    const oldestKey = messageCacheLRU.keys().next().value;
+-    messageCacheLRU.delete(oldestKey);
++  cacheMap.set(messageId, Date.now());
++  if (cacheMap.size > MAX_LRU_PER_WISP) {
++    const oldestKey = cacheMap.keys().next().value;
++    cacheMap.delete(oldestKey);
+   }
+ 
+   // Capa 2: Persistencia DB (Por si node.js reinició)
+   try {
+-    const { data } = await supabase.from('wsp_processed_messages')
+-      .select('message_id')
+-      .eq('wisp_id', wispId)
+-      .eq('message_id', messageId)
+-      .maybeSingle(); // Evitar excepciones si no existe fila
++    const { error } = await supabase.from('wsp_processed_messages')
++      .insert({ wisp_id: wispId, message_id: messageId });
+       
+-    if (data) return true; // Ya fue procesado anteriormente
+-    
+-    // Si no está, lo registramos para futuras duplicaciones
+-    await supabase.from('wsp_processed_messages').insert({ wisp_id: wispId, message_id: messageId }).catch(()=>{});
++    if (error && error.code === '23505') return true; // Ya fue procesado anteriormente
+   } catch(err) {
+     // Si falla la DB asumimos que no es duplicado
+   }
+@@ -196,51 +192,46 @@ export function attachEventHandlers(wispId, sock) {
+ 
+       // Despachar al agente principal con control de concurrencia y timeout de 15 segundos
+       if (MAIN_AGENT_WEBHOOK && text) {
+-        const currentCount = webhookCounters.get(wispId) || 0;
+-        if (currentCount >= MAX_WEBHOOKS_PER_WISP) {
+-          console.warn(`[WISP ${wispId}] Límite de webhooks paralelos alcanzado (${MAX_WEBHOOKS_PER_WISP}). Omitiendo despacho.`);
+-          continue;
+-        }
+-
+-        webhookCounters.set(wispId, currentCount + 1);
+-        const controller = new AbortController();
+-        const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s timeout
+-
+-        try {
+-          const response = await fetch(MAIN_AGENT_WEBHOOK, {
+-            method: 'POST',
+-            headers: {
+-              'Content-Type': 'application/json',
+-              'x-api-key': API_KEY
+-            },
+-            body: JSON.stringify({
+-              wisp_id: wispId, // Inyectamos WISP ID
+-              event: 'message_received',
+-              message_id: messageId, // Forwarding message ID
+-              from: remoteJid,
+-              sender: msg.key.senderPn || msg.key.participantPn || msg.key.participant || msg.participant || remoteJid,
+-              pushName,
+-              text,
+-              timestamp: msg.messageTimestamp,
+-              isGroup
+-            }),
+-            signal: controller.signal
+-          });
+-
+-          if (!response.ok) {
+-            console.error(`[WISP ${wispId}] Fallo al enviar webhook. HTTP Status: ${response.status}`);
+-          }
+-        } catch (error) {
+-          if (error.name === 'AbortError') {
+-            console.error(`[WISP ${wispId}] Webhook local abortado por timeout de 15 segundos.`);
+-          } else {
+-            console.error(`[WISP ${wispId}] Error al despachar el webhook local: ${error.message}`);
++        const limit = getWebhookLimit(wispId);
++        
++        limit(async () => {
++          const controller = new AbortController();
++          const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s timeout
++
++          try {
++            const response = await fetch(MAIN_AGENT_WEBHOOK, {
++              method: 'POST',
++              headers: {
++                'Content-Type': 'application/json',
++                'x-api-key': API_KEY
++              },
++              body: JSON.stringify({
++                wisp_id: wispId, // Inyectamos WISP ID
++                event: 'message_received',
++                message_id: messageId, // Forwarding message ID
++                from: remoteJid,
++                sender: msg.key.senderPn || msg.key.participantPn || msg.key.participant || msg.participant || remoteJid,
++                pushName,
++                text,
++                timestamp: msg.messageTimestamp,
++                isGroup
++              }),
++              signal: controller.signal
++            });
++
++            if (!response.ok) {
++              console.error(`[WISP ${wispId}] Fallo al enviar webhook. HTTP Status: ${response.status}`);
++            }
++          } catch (error) {
++            if (error.name === 'AbortError') {
++              console.error(`[WISP ${wispId}] Webhook local abortado por timeout de 15 segundos.`);
++            } else {
++              console.error(`[WISP ${wispId}] Error al despachar el webhook local: ${error.message}`);
++            }
++          } finally {
++            clearTimeout(timeoutId);
+           }
+-        } finally {
+-          clearTimeout(timeoutId);
+-          const c = webhookCounters.get(wispId) || 1;
+-          webhookCounters.set(wispId, c - 1);
+-        }
++        });
+       }
+     }
+   });
+diff --git a/wsp-agent-v2/src/reconnect.manager.mjs b/wsp-agent-v2/src/reconnect.manager.mjs
+index c1bcc59..6c69b15 100644
+--- a/wsp-agent-v2/src/reconnect.manager.mjs
++++ b/wsp-agent-v2/src/reconnect.manager.mjs
+@@ -2,12 +2,16 @@ import { DisconnectReason } from '@whiskeysockets/baileys';
+ import { destroySession, sessions, gracefulSocketClose } from './session.manager.mjs';
+ import { createSocket } from './socket.factory.mjs';
+ import { attachEventHandlers } from './event.handlers.mjs';
++import pLimit from 'p-limit';
++
++const createSocketLimit = pLimit(5);
+ 
+ const MAX_RETRIES = 10000;
+ 
+ export function handleReconnect(wispId, lastDisconnect) {
+   const session = sessions.get(wispId);
+   if (!session) return;
++  const currentInstanceId = session.instanceId;
+ 
+   const statusCode = lastDisconnect?.error?.output?.statusCode;
+   const errorMessage = lastDisconnect?.error?.message || '';
+@@ -91,15 +95,23 @@ export function handleReconnect(wispId, lastDisconnect) {
+   session.reconnectTimer = setTimeout(async () => {
+     try {
+       session.reconnectTimer = null; // Liberar referencia del timer activo
++      
++      const currentSession = sessions.get(wispId);
++      if (!currentSession || currentSession.instanceId !== currentInstanceId || currentSession.isDestroyed) {
++        console.warn(`[RECONNECT MANAGER] WISP ${wispId} reconexión abortada por ser sesión zombie o destruida.`);
++        return;
++      }
++      
+       console.log(`[RECONNECT MANAGER] WISP ${wispId} iniciando intento de reconexión...`);
+       
+       // Promise.race para evitar que createSocket se cuelgue infinitamente si falla la red
+-      const sock = await Promise.race([
++      // Envuelto en p-limit para evitar Thundering Herd
++      const sock = await createSocketLimit(() => Promise.race([
+         createSocket(wispId),
+         new Promise((_, reject) =>
+           setTimeout(() => reject(new Error('Socket timeout de 30 segundos')), 30000)
+         )
+-      ]);
++      ]));
+       
+       session.socket = sock;
+       
+diff --git a/wsp-agent-v2/src/session.manager.mjs b/wsp-agent-v2/src/session.manager.mjs
+index 669862c..8b2965b 100644
+--- a/wsp-agent-v2/src/session.manager.mjs
++++ b/wsp-agent-v2/src/session.manager.mjs
+@@ -2,6 +2,7 @@ import { createSocket } from './socket.factory.mjs';
+ import { attachEventHandlers } from './event.handlers.mjs';
+ import { supabase } from './supabase.client.mjs';
+ import { DisconnectReason } from '@whiskeysockets/baileys';
++import crypto from 'crypto';
+ 
+ // Registry de sesiones activas en memoria
+ export const sessions = new Map();
+@@ -97,6 +98,8 @@ export async function lazyLoadSession(wispId) {
+       
+       session = {
+         wispId,
++        instanceId: crypto.randomUUID(),
++        isDestroyed: false,
+         socket: sock,
+         status: 'connecting',
+         qr: null,
+@@ -157,6 +160,7 @@ export async function destroySession(wispId, isLoggedOut = false) {
+     return;
+   }
+   session.destroying = true;
++  session.isDestroyed = true;
+   
+   console.log(`[SESSION MANAGER] Destruyendo sesión activa para WISP: ${wispId}`);

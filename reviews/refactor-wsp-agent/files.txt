@@ -1,0 +1,6 @@
+docs/MODULOS/WSP_AGENT_V2_DOC.md
+wsp-agent-v2/package-lock.json
+wsp-agent-v2/package.json
+wsp-agent-v2/src/event.handlers.mjs
+wsp-agent-v2/src/reconnect.manager.mjs
+wsp-agent-v2/src/session.manager.mjs
