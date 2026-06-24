@@ -1,0 +1,190 @@
+diff --git a/app/actions/tickets.ts b/app/actions/tickets.ts
+new file mode 100644
+index 0000000..289ff8c
+--- /dev/null
++++ b/app/actions/tickets.ts
+@@ -0,0 +1,116 @@
++'use server'
++
++import { createClient } from "@/lib/supabase/server"
++import { revalidatePath } from "next/cache"
++
++/**
++ * Obtiene los tickets de un cliente
++ */
++export async function getClientTicketsAction(
++  clientId: string,
++  wispId: string
++) {
++  try {
++    const supabase = await createClient()
++
++    // Verificar que el cliente pertenece al WISP
++    const { data: client, error: clientErr } = await supabase
++      .from('isp_clients')
++      .select('id')
++      .eq('id', clientId)
++      .eq('wisp_id', wispId)
++      .single()
++
++    if (clientErr || !client) {
++      throw new Error('Cliente no encontrado o sin permisos')
++    }
++
++    const { data, error } = await supabase
++      .from('support_tickets')
++      .select('id, title, description, status, priority, created_at, updated_at')
++      .eq('client_id', clientId)
++      .eq('wisp_id', wispId)
++      .order('created_at', { ascending: false })
++
++    if (error) throw error
++    return { success: true, data: data || [] }
++  } catch (error: any) {
++    return { success: false, error: error.message }
++  }
++}
++
++/**
++ * Crea un nuevo ticket de soporte para un cliente
++ */
++export async function createTicketAction(
++  clientId: string,
++  wispId: string,
++  ticket: {
++    title: string
++    description?: string
++    priority: 'low' | 'medium' | 'high'
++  }
++) {
++  try {
++    const supabase = await createClient()
++
++    // Verificar que el cliente pertenece al WISP
++    const { data: client, error: clientErr } = await supabase
++      .from('isp_clients')
++      .select('id')
++      .eq('id', clientId)
++      .eq('wisp_id', wispId)
++      .single()
++
++    if (clientErr || !client) {
++      throw new Error('Cliente no encontrado o sin permisos')
++    }
++
++    const { error } = await supabase
++      .from('support_tickets')
++      .insert({
++        wisp_id: wispId,
++        client_id: clientId,
++        title: ticket.title,
++        description: ticket.description || null,
++        priority: ticket.priority,
++        status: 'open'
++      })
++
++    if (error) throw error
++
++    revalidatePath('/dashboard/clientes')
++    return { success: true }
++  } catch (error: any) {
++    return { success: false, error: error.message }
++  }
++}
++
++/**
++ * Cambia el status de un ticket
++ */
++export async function updateTicketStatusAction(
++  ticketId: string,
++  wispId: string,
++  status: 'open' | 'in_progress' | 'closed'
++) {
++  try {
++    const supabase = await createClient()
++
++    const { error } = await supabase
++      .from('support_tickets')
++      .update({
++        status,
++        updated_at: new Date().toISOString()
++      })
++      .eq('id', ticketId)
++      .eq('wisp_id', wispId)
++
++    if (error) throw error
++
++    revalidatePath('/dashboard/clientes')
++    return { success: true }
++  } catch (error: any) {
++    return { success: false, error: error.message }
++  }
++}
+diff --git a/components/dashboard/isp-client-details-dialog.tsx b/components/dashboard/isp-client-details-dialog.tsx
+index e4b3bec..00ef1f4 100644
+--- a/components/dashboard/isp-client-details-dialog.tsx
++++ b/components/dashboard/isp-client-details-dialog.tsx
+@@ -13,6 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
+ import { Save, User, CreditCard, Ticket, FileText, Upload, History, Info, Activity, Radio, MapPin, Pencil, Check, Settings, Bell, Clock, AlertTriangle, Loader2 } from "lucide-react"
+ import { toast } from "sonner"
+ import { updateIspClientExtendedAction, getBillingSettingsAction, updateBillingSettingsAction, getClientInvoicesAction, registerPaymentAction } from "@/app/actions/isp"
++import { getClientTicketsAction, createTicketAction, updateTicketStatusAction } from "@/app/actions/tickets"
+ 
+ interface IspClientDetailsDialogProps {
+   client: any | null
+@@ -40,6 +41,14 @@ export function IspClientDetailsDialog({ client, open, onOpenChange, routers = [
+     notes: ''
+   })
+   const [savingPayment, setSavingPayment] = useState(false)
++  const [tickets, setTickets] = useState<any[]>([])
++  const [loadingTickets, setLoadingTickets] = useState(false)
++  const [ticketForm, setTicketForm] = useState({
++    title: '',
++    description: '',
++    priority: 'medium'
++  })
++  const [savingTicket, setSavingTicket] = useState(false)
+ 
+   // Local state para campos editables (Básicos y Adicionales)
+   const [clientForm, setClientForm] = useState({
+@@ -128,6 +137,40 @@ export function IspClientDetailsDialog({ client, open, onOpenChange, routers = [
+     setLoadingInvoices(false)
+   }
+ 
++  const loadTickets = async () => {
++    setLoadingTickets(true)
++    const res = await getClientTicketsAction(client.id, wispId)
++    if (res.success) setTickets(res.data)
++    setLoadingTickets(false)
++  }
++
++  const handleCreateTicket = async () => {
++    if (!ticketForm.title.trim()) return
++    setSavingTicket(true)
++    const res = await createTicketAction(client.id, wispId, {
++      title: ticketForm.title,
++      description: ticketForm.description || undefined,
++      priority: ticketForm.priority as any
++    })
++    if (res.success) {
++      setTicketForm({ title: '', description: '', priority: 'medium' })
++      await loadTickets()
++      toast.success('Ticket creado correctamente')
++    } else {
++      toast.error('Error al crear ticket: ' + res.error)
++    }
++    setSavingTicket(false)
++  }
++
++  const handleUpdateStatus = async (ticketId: string, status: string) => {
++    const res = await updateTicketStatusAction(ticketId, wispId, status as any)
++    if (res.success) {
++      await loadTickets()
++    } else {
++      toast.error('Error al actualizar ticket')
++    }
++  }
++
+   const handleRegisterPayment = async () => {
+     if (!paymentForm.amount || Number(paymentForm.amount) <= 0) return
+     setSavingPayment(true)
