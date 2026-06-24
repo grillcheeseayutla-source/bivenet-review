@@ -1,0 +1,343 @@
+diff --git a/provision-agent-v2/core/credential.resolver.mjs b/provision-agent-v2/core/credential.resolver.mjs
+new file mode 100644
+index 0000000..c2b9a4b
+--- /dev/null
++++ b/provision-agent-v2/core/credential.resolver.mjs
+@@ -0,0 +1,180 @@
++import { supabase } from './supabase.mjs';
++import { rosCreateTempNat } from './routeros.mjs';
++import { executeSshCommand } from './ubiquiti.mjs';
++
++const FALLBACK_HARDCODED = [
++  { ssh_user: 'ubnt', ssh_pass: 'ubnt', label: 'Ubiquiti default' }
++];
++
++const TEST_COMMAND = 'echo ok';
++const TEST_TIMEOUT_MS = 8000;
++
++/**
++ * Prueba si una credencial SSH funciona contra un dispositivo.
++ * Usa el túnel NAT temporal del MikroTik.
++ * Retorna true si funciona, false si falla.
++ */
++async function testSSHCredential(api, routerVpnIp, deviceIp, user, pass) {
++  let natPort = null;
++  try {
++    const nat = await rosCreateTempNat(api, {
++      targetIp: deviceIp,
++      targetPort: 22
++    });
++    natPort = nat.port;
++
++    await new Promise(r => setTimeout(r, 1200));
++
++    // Race entre el comando SSH y un timeout
++    await Promise.race([
++      executeSshCommand(routerVpnIp, natPort, user, pass, TEST_COMMAND),
++      new Promise((_, reject) =>
++        setTimeout(() => reject(new Error('SSH test timeout')), TEST_TIMEOUT_MS)
++      )
++    ]);
++
++    return true;
++  } catch {
++    return false;
++  }
++}
++
++/**
++ * Guarda la credencial verificada en el dispositivo para
++ * evitar repetir el proceso la próxima vez.
++ */
++async function saveVerifiedCredentialToClient(deviceIp, wispId, user, pass) {
++  try {
++    await supabase
++      .from('isp_clients')
++      .update({
++        antenna_user: user,
++        antenna_pass: pass
++      })
++      .eq('ip_address', deviceIp)
++      .eq('wisp_id', wispId)
++      .is('antenna_user', null); // solo si no tiene una ya
++  } catch (e) {
++    console.warn('[CredResolver] No se pudo guardar credencial verificada:', e.message);
++  }
++}
++
++/**
++ * Incrementa contadores de éxito/fallo en el store.
++ */
++async function recordResult(credId, success) {
++  if (!credId) return;
++  try {
++    const field = success ? 'success_count' : 'fail_count';
++    await supabase.rpc('increment_ssh_cred_counter', {
++      cred_id: credId,
++      field_name: field
++    });
++  } catch {
++    // No crítico — no interrumpir el flujo
++  }
++}
++
++/**
++ * Resuelve las credenciales SSH para un dispositivo.
++ *
++ * Prioridad:
++ *   1. Credencial específica del dispositivo (isp_clients.antenna_user/pass)
++ *   2. Store del WISP ordenado por priority ASC
++ *   3. Fallback hardcodeado ubnt/ubnt
++ *
++ * Si encuentra la credencial correcta vía store,
++ * la guarda en isp_clients para próximas conexiones.
++ *
++ * @param {object} api - Instancia de RouterOSAPI ya conectada
++ * @param {string} routerVpnIp - IP VPN del MikroTik (para el túnel)
++ * @param {string} deviceIp - IP local del dispositivo Ubiquiti
++ * @param {string} wispId - UUID del WISP
++ * @param {string} deviceType - 'cpe' | 'ap' | 'ptp' | 'all'
++ * @returns {{ user: string, pass: string, source: string }}
++ */
++export async function resolveSSHCredentials(
++  api,
++  routerVpnIp,
++  deviceIp,
++  wispId,
++  deviceType = 'cpe'
++) {
++  console.log(`[CredResolver] Resolviendo credenciales para ${deviceIp} (type: ${deviceType})`);
++
++  // ── CAPA 1: Credencial específica del dispositivo ──────────
++  try {
++    const { data: client } = await supabase
++      .from('isp_clients')
++      .select('antenna_user, antenna_pass')
++      .eq('ip_address', deviceIp)
++      .eq('wisp_id', wispId)
++      .not('antenna_user', 'is', null)
++      .maybeSingle();
++
++    if (client?.antenna_user && client?.antenna_pass) {
++      console.log(`[CredResolver] ✅ Credencial específica encontrada en isp_clients`);
++      return {
++        user: client.antenna_user,
++        pass: client.antenna_pass,
++        source: 'client_specific'
++      };
++    }
++  } catch (e) {
++    console.warn('[CredResolver] Error buscando credencial específica:', e.message);
++  }
++
++  // ── CAPA 2: Store del WISP con fallback ordenado ───────────
++  let storeCredentials = [];
++  try {
++    const { data } = await supabase
++      .from('wisp_ssh_credentials')
++      .select('id, ssh_user, ssh_pass, label, priority')
++      .eq('wisp_id', wispId)
++      .in('device_type', [deviceType, 'all'])
++      .order('priority', { ascending: true });
++
++    storeCredentials = data || [];
++  } catch (e) {
++    console.warn('[CredResolver] Error cargando store de credenciales:', e.message);
++  }
++
++  // Combinar store + fallback hardcodeado al final
++  const allCredentials = [
++    ...storeCredentials,
++    ...FALLBACK_HARDCODED.map(c => ({ ...c, id: null }))
++  ];
++
++  console.log(`[CredResolver] Intentando ${allCredentials.length} credenciales para ${deviceIp}`);
++
++  for (const cred of allCredentials) {
++    console.log(`[CredResolver] → Probando: ${cred.ssh_user} / ${cred.label || 'fallback'}`);
++
++    const ok = await testSSHCredential(api, routerVpnIp, deviceIp, cred.ssh_user, cred.ssh_pass);
++
++    if (ok) {
++      console.log(`[CredResolver] ✅ Credencial válida: ${cred.ssh_user} (${cred.label || 'fallback'})`);
++      await recordResult(cred.id, true);
++
++      // Guardar en el cliente para próxima vez (solo si no tenía una)
++      await saveVerifiedCredentialToClient(deviceIp, wispId, cred.ssh_user, cred.ssh_pass);
++
++      return {
++        user: cred.ssh_user,
++        pass: cred.ssh_pass,
++        source: cred.id ? 'store_match' : 'hardcoded_fallback',
++        credId: cred.id,
++        label: cred.label
++      };
++    }
++
++    await recordResult(cred.id, false);
++  }
++
++  // ── Sin credenciales válidas ───────────────────────────────
++  throw new Error(
++    `[CredResolver] No se encontró credencial SSH válida para ${deviceIp}. ` +
++    `Se intentaron ${allCredentials.length} combinaciones. ` +
++    `Agrega las credenciales correctas en Configuración → Credenciales SSH.`
++  );
++}
+diff --git a/provision-agent-v2/modules/ai/tools.diagnostic.mjs b/provision-agent-v2/modules/ai/tools.diagnostic.mjs
+index a6e03f5..9e7865e 100644
+--- a/provision-agent-v2/modules/ai/tools.diagnostic.mjs
++++ b/provision-agent-v2/modules/ai/tools.diagnostic.mjs
+@@ -8,20 +8,14 @@ export async function ejecutarDiagnosticoCliente(args) {
+   console.log(`[AI TOOL] Iniciando diagnóstico de cliente. IP: ${targetIp}, Router: ${routerId}, WISP: ${wispId}`);
+   
+   try {
+-    const { data: client, error: clientError } = await supabase
++    const { data: client } = await supabase
+       .from('isp_clients')
+-      .select('antenna_user, antenna_pass, ap_ip')
++      .select('ap_ip')
+       .eq('id', clientId)
+       .eq('wisp_id', wispId)
+       .single();
+ 
+-    if (clientError || !client) {
+-      throw new Error("No se encontraron credenciales de antena para este cliente.");
+-    }
+-
+-    const sshUser = client.antenna_user || 'ubnt';
+-    const sshPass = client.antenna_pass || 'ubnt';
+-    const apIp = client.ap_ip || '';
++    const apIp = client?.ap_ip || '';
+ 
+     // Dispatcher: iniciamos la petición pero NO la esperamos
+     fetchWithTimeout(`http://127.0.0.1:${PORT}/api/runRouterCommand`, {
+@@ -30,7 +24,12 @@ export async function ejecutarDiagnosticoCliente(args) {
+       body: JSON.stringify({
+         routerId,
+         command: 'runIspDiagnosis',
+-        args: { clientId, targetIp, sshUser, sshPass, apIp }
++        tenantContext: { wispId },
++        args: {
++          clientId,
++          targetIp,
++          apIp
++        }
+       })
+     }).then(res => res.json()).then(result => {
+       if (result.ok) {
+diff --git a/provision-agent-v2/modules/router/router.controller.mjs b/provision-agent-v2/modules/router/router.controller.mjs
+index 9b340a0..d144c3e 100644
+--- a/provision-agent-v2/modules/router/router.controller.mjs
++++ b/provision-agent-v2/modules/router/router.controller.mjs
+@@ -13,6 +13,7 @@ import {
+ } from './router.service.mjs';
+ import { enqueueRouterOperation } from '../../core/router.queue.mjs';
+ import { withCircuitBreaker } from '../../core/circuit.breaker.mjs';
++import { resolveSSHCredentials } from '../../core/credential.resolver.mjs';
+ 
+ import {
+   connectSmart,
+@@ -324,51 +325,66 @@ export async function runRouterCommandHandler(req, res) {
+             break;
+           }
+           case 'getApStations':
+-            resultData = await ubiquitiGetStations(api, r.vpn_ip || hostToUse, args.targetIp, args.sshUser, args.sshPass);
+-            break;
+           case 'getAntennaDiagnostics':
+-            resultData = await ubiquitiGetDiagnostics(api, r.vpn_ip || hostToUse, args.targetIp, args.sshUser, args.sshPass);
+-            break;
+           case 'rebootAntenna':
+-            resultData = await ubiquitiReboot(api, r.vpn_ip || hostToUse, args.targetIp, args.sshUser, args.sshPass);
+-            break;
+           case 'getAntennaLogs':
+-            resultData = await ubiquitiGetLogs(api, r.vpn_ip || hostToUse, args.targetIp, args.sshUser, args.sshPass);
++          case 'runIspDiagnosis': {
++            const wispId = args.tenantContext?.wispId || req.body?.wispId;
++            const deviceIp = args.targetIp;
++            const resolved = await resolveSSHCredentials(
++              api,
++              r.vpn_ip || hostToUse,
++              deviceIp,
++              wispId,
++              args.deviceType || 'cpe'
++            );
++            const sshUser = resolved.user;
++            const sshPass = resolved.pass;
++
++            if (command === 'getApStations') {
++              resultData = await ubiquitiGetStations(api, r.vpn_ip || hostToUse, args.targetIp, sshUser, sshPass);
++            } else if (command === 'getAntennaDiagnostics') {
++              resultData = await ubiquitiGetDiagnostics(api, r.vpn_ip || hostToUse, args.targetIp, sshUser, sshPass);
++            } else if (command === 'rebootAntenna') {
++              resultData = await ubiquitiReboot(api, r.vpn_ip || hostToUse, args.targetIp, sshUser, sshPass);
++            } else if (command === 'getAntennaLogs') {
++              resultData = await ubiquitiGetLogs(api, r.vpn_ip || hostToUse, args.targetIp, sshUser, sshPass);
++            } else if (command === 'runIspDiagnosis') {
++              if (activeSessions.size >= MAX_GLOBAL_SESSIONS) {
++                throw new Error(`Servidor saturado. Máximo ${MAX_GLOBAL_SESSIONS} diagnósticos simultáneos permitidos.`);
++              }
++              
++              const apCount = sessionsPerAp.get(args.apIp) || 0;
++              if (apCount >= MAX_SESSIONS_PER_AP) {
++                throw new Error(`El AP ${args.apIp} está saturado con un diagnóstico activo. Por favor, espera.`);
++              }
++
++              const session = new DiagnosticSession(args.clientId, api, r.vpn_ip || hostToUse, args.targetIp, sshUser, sshPass, args.apIp, args.apSshUser, args.apSshPass);
++              const sessionId = await session.init();
++              
++              activeSessions.set(sessionId, session);
++              sessionsPerAp.set(args.apIp, apCount + 1);
++
++              session.start()
++                .catch(err => {
++                  console.error(`[runIspDiagnosis] Falla asíncrona en sesión ${sessionId}:`, err);
++                })
++                .finally(() => {
++                  activeSessions.delete(sessionId);
++                  const currentApCount = sessionsPerAp.get(args.apIp) || 1;
++                  sessionsPerAp.set(args.apIp, Math.max(0, currentApCount - 1));
++                });
++
++              resultData = { sessionId };
++              api = null; // Transfer ownership
++            }
+             break;
++          }
+           case 'rebootRouter':
+             resultData = await rosCall(api, '/system/reboot');
+             break;
+           case 'getDhcpLeases': resultData = await rosCall(api, '/ip/dhcp-server/lease/print'); break;
+           case 'getLogs': resultData = await rosCall(api, '/log/print'); break;
+-          case 'runIspDiagnosis':
+-            if (activeSessions.size >= MAX_GLOBAL_SESSIONS) {
+-              throw new Error(`Servidor saturado. Máximo ${MAX_GLOBAL_SESSIONS} diagnósticos simultáneos permitidos.`);
+-            }
+-            
+-            const apCount = sessionsPerAp.get(args.apIp) || 0;
+-            if (apCount >= MAX_SESSIONS_PER_AP) {
+-              throw new Error(`El AP ${args.apIp} está saturado con un diagnóstico activo. Por favor, espera.`);
+-            }
+-
+-            const session = new DiagnosticSession(args.clientId, api, r.vpn_ip || hostToUse, args.targetIp, args.sshUser, args.sshPass, args.apIp, args.apSshUser, args.apSshPass);
+-            const sessionId = await session.init();
+-            
+-            activeSessions.set(sessionId, session);
+-            sessionsPerAp.set(args.apIp, apCount + 1);
+-
+-            session.start()
+-              .catch(err => {
+-                console.error(`[runIspDiagnosis] Falla asíncrona en sesión ${sessionId}:`, err);
+-              })
+-              .finally(() => {
+-                activeSessions.delete(sessionId);
+-                const currentApCount = sessionsPerAp.get(args.apIp) || 1;
+-                sessionsPerAp.set(args.apIp, Math.max(0, currentApCount - 1));
+-              });
+-
+-            resultData = { sessionId };
+-            api = null; // Transfer ownership
+-            break;
+           default:
+             throw new Error(`unsupported_command: ${command}`);
+         }
