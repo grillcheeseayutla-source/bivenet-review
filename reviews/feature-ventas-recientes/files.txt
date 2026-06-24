@@ -1,0 +1,2 @@
+app/actions/dashboard.ts
+components/dashboard/recent-sales.tsx

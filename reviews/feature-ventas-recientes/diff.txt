@@ -1,0 +1,164 @@
+diff --git a/app/actions/dashboard.ts b/app/actions/dashboard.ts
+index d28657e..3cc0521 100644
+--- a/app/actions/dashboard.ts
++++ b/app/actions/dashboard.ts
+@@ -88,3 +88,52 @@ export async function getDashboardKPIsAction(
+     salesCompareDay: salesCompareDay ?? 0,
+   }
+ }
++
++export async function getMoreRecentSalesAction(wispId: string, offset: number, limit: number = 6) {
++  const supabase = await createClient();
++  const { data: latestSalesRaw } = await supabase
++    .from("hotspot_sales")
++    .select(`
++      id,
++      price_sold,
++      sold_at,
++      voucher_id,
++      hotspot_vouchers (
++        username,
++        plan_id
++      )
++    `)
++    .eq("wisp_id", wispId)
++    .order("sold_at", { ascending: false })
++    .range(offset, offset + limit - 1);
++
++  if (!latestSalesRaw || latestSalesRaw.length === 0) return [];
++
++  const planIds = latestSalesRaw.map(s => (s.hotspot_vouchers as any)?.plan_id).filter(Boolean);
++  const { data: plansData } = await supabase
++    .from("hotspot_plans")
++    .select("id, name")
++    .eq("wisp_id", wispId)
++    .in("id", planIds.length > 0 ? planIds : ['00000000-0000-0000-0000-000000000000']);
++
++  const plansMap = new Map(plansData?.map(p => [p.id, p.name]) || []);
++
++  const formatTimeAgo = (dateString: string) => {
++    const diff = Math.floor(DateTime.now().diff(DateTime.fromISO(dateString, { zone: "utc" }), 'minutes').minutes);
++    if (diff < 60) return `${Math.max(0, diff)} min`;
++    const hours = Math.floor(diff / 60);
++    if (hours < 24) return `${hours} h`;
++    return `${Math.floor(hours / 24)} d`;
++  };
++
++  return latestSalesRaw.map(sale => {
++    const voucher = sale.hotspot_vouchers as any;
++    return {
++      id: sale.id,
++      pin: voucher?.username || "Desconocido",
++      planName: voucher?.plan_id ? (plansMap.get(voucher.plan_id) || "Plan Eliminado") : "Desconocido",
++      amount: Number(sale.price_sold || 0),
++      timeAgo: formatTimeAgo(sale.sold_at)
++    };
++  });
++}
+diff --git a/components/dashboard/recent-sales.tsx b/components/dashboard/recent-sales.tsx
+index 2585a0a..4bf8270 100644
+--- a/components/dashboard/recent-sales.tsx
++++ b/components/dashboard/recent-sales.tsx
+@@ -1,4 +1,10 @@
++"use client"
++
++import { useState } from "react"
+ import { Avatar, AvatarFallback } from "@/components/ui/avatar"
++import { Button } from "@/components/ui/button"
++import { Loader2 } from "lucide-react"
++import { getMoreRecentSalesAction } from "@/app/actions/dashboard"
+ 
+ export interface RecentSale {
+   id: string
+@@ -10,9 +16,14 @@ export interface RecentSale {
+ 
+ interface RecentSalesProps {
+   sales: RecentSale[]
++  wispId: string
+ }
+ 
+-export function RecentSales({ sales }: RecentSalesProps) {
++export function RecentSales({ sales: initialSales, wispId }: RecentSalesProps) {
++  const [sales, setSales] = useState<RecentSale[]>(initialSales)
++  const [loading, setLoading] = useState(false)
++  const [hasMore, setHasMore] = useState(initialSales.length >= 6) // asumiendo que 6 es el limite inicial
++
+   if (!sales || sales.length === 0) {
+     return (
+       <div className="flex items-center justify-center h-[300px] text-muted-foreground text-sm">
+@@ -21,26 +32,57 @@ export function RecentSales({ sales }: RecentSalesProps) {
+     )
+   }
+ 
++  const loadMore = async () => {
++    setLoading(true)
++    try {
++      const moreSales = await getMoreRecentSalesAction(wispId, sales.length, 6)
++      if (moreSales.length < 6) {
++        setHasMore(false)
++      }
++      if (moreSales.length > 0) {
++        setSales(prev => [...prev, ...moreSales])
++      }
++    } catch (error) {
++      console.error("Error loading more sales", error)
++    } finally {
++      setLoading(false)
++    }
++  }
++
+   return (
+-    <div className="space-y-8">
+-      {sales.map((sale) => (
+-        <div key={sale.id} className="flex items-center">
+-          <Avatar className="h-9 w-9">
+-            <AvatarFallback className="bg-primary/10 text-primary font-bold">
+-              {sale.pin.substring(0, 2)}
+-            </AvatarFallback>
+-          </Avatar>
+-          <div className="ml-4 space-y-1">
+-            <p className="text-sm font-medium leading-none">Ficha: {sale.pin}</p>
+-            <p className="text-sm text-muted-foreground">
+-              {sale.planName} • Hace {sale.timeAgo}
+-            </p>
+-          </div>
+-          <div className="ml-auto font-medium text-emerald-500">
+-            +${sale.amount.toLocaleString('es-MX', { minimumFractionDigits: 2 })}
++    <div className="space-y-6">
++      <div className="space-y-8 max-h-[400px] overflow-y-auto pr-2">
++        {sales.map((sale) => (
++          <div key={sale.id} className="flex items-center">
++            <Avatar className="h-9 w-9">
++              <AvatarFallback className="bg-primary/10 text-primary font-bold">
++                {sale.pin.substring(0, 2)}
++              </AvatarFallback>
++            </Avatar>
++            <div className="ml-4 space-y-1">
++              <p className="text-sm font-medium leading-none">Ficha: {sale.pin}</p>
++              <p className="text-sm text-muted-foreground">
++                {sale.planName} • Hace {sale.timeAgo}
++              </p>
++            </div>
++            <div className="ml-auto font-medium text-emerald-500">
++              +${sale.amount.toLocaleString('es-MX', { minimumFractionDigits: 2 })}
++            </div>
+           </div>
+-        </div>
+-      ))}
++        ))}
++      </div>
++      
++      {hasMore && (
++        <Button 
++          variant="outline" 
++          className="w-full mt-4" 
++          onClick={loadMore}
++          disabled={loading}
++        >
++          {loading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
++          Mostrar más
++        </Button>
++      )}
+     </div>
+   )
+ }
