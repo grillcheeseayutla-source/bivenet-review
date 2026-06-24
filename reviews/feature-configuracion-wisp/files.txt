@@ -1,0 +1,3 @@
+app/actions/settings.ts
+app/dashboard/configuracion/ConfiguracionClient.tsx
+app/dashboard/configuracion/page.tsx

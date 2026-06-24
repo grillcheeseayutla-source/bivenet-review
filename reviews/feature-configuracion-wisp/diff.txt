@@ -1,0 +1,308 @@
+diff --git a/app/actions/settings.ts b/app/actions/settings.ts
+new file mode 100644
+index 0000000..6e02b35
+--- /dev/null
++++ b/app/actions/settings.ts
+@@ -0,0 +1,89 @@
++'use server'
++
++import { createClient } from "@/lib/supabase/server"
++import { revalidatePath } from "next/cache"
++
++/**
++ * Obtiene la configuración del WISP actual
++ */
++export async function getWispSettingsAction() {
++  try {
++    const supabase = await createClient()
++
++    const { data: { user }, error: authErr } = await supabase.auth.getUser()
++    if (authErr || !user) throw new Error('No autenticado')
++
++    const { data: dbUser, error: userErr } = await supabase
++      .from('users')
++      .select('wisp_id')
++      .eq('id', user.id)
++      .single()
++
++    if (userErr || !dbUser?.wisp_id) throw new Error('WISP no encontrado')
++
++    const { data, error } = await supabase
++      .from('wisps')
++      .select(`
++        id,
++        nombre,
++        email_contacto,
++        telefono,
++        whatsapp,
++        logo_url,
++        ciudad,
++        timezone,
++        billing_day_default
++      `)
++      .eq('id', dbUser.wisp_id)
++      .single()
++
++    if (error) throw error
++    return { success: true, data }
++  } catch (error: any) {
++    return { success: false, error: error.message }
++  }
++}
++
++/**
++ * Actualiza la configuración del WISP actual
++ */
++export async function updateWispSettingsAction(settings: {
++  nombre?: string
++  email_contacto?: string
++  telefono?: string
++  whatsapp?: string
++  logo_url?: string
++  ciudad?: string
++  timezone?: string
++  billing_day_default?: number
++}) {
++  try {
++    const supabase = await createClient()
++
++    const { data: { user }, error: authErr } = await supabase.auth.getUser()
++    if (authErr || !user) throw new Error('No autenticado')
++
++    const { data: dbUser, error: userErr } = await supabase
++      .from('users')
++      .select('wisp_id')
++      .eq('id', user.id)
++      .single()
++
++    if (userErr || !dbUser?.wisp_id) throw new Error('WISP no encontrado')
++
++    const { error } = await supabase
++      .from('wisps')
++      .update({
++        ...settings,
++        updated_at: new Date().toISOString()
++      })
++      .eq('id', dbUser.wisp_id)
++
++    if (error) throw error
++
++    revalidatePath('/dashboard/configuracion')
++    return { success: true }
++  } catch (error: any) {
++    return { success: false, error: error.message }
++  }
++}
+diff --git a/app/dashboard/configuracion/ConfiguracionClient.tsx b/app/dashboard/configuracion/ConfiguracionClient.tsx
+new file mode 100644
+index 0000000..ebfe0ef
+--- /dev/null
++++ b/app/dashboard/configuracion/ConfiguracionClient.tsx
+@@ -0,0 +1,167 @@
++'use client'
++
++import { useState } from "react"
++import { updateWispSettingsAction } from "@/app/actions/settings"
++import { toast } from "sonner"
++import { Save, Loader2 } from "lucide-react"
++import { Input } from "@/components/ui/input"
++import { Label } from "@/components/ui/label"
++import { Button } from "@/components/ui/button"
++import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
++
++export default function ConfiguracionClient({ initialData }: { initialData: any }) {
++  const [form, setForm] = useState({
++    nombre: initialData?.nombre || "",
++    ciudad: initialData?.ciudad || "",
++    telefono: initialData?.telefono || "",
++    whatsapp: initialData?.whatsapp || "",
++    logo_url: initialData?.logo_url || "",
++    email_contacto: initialData?.email_contacto || "",
++    timezone: initialData?.timezone || "America/Mexico_City",
++    billing_day_default: initialData?.billing_day_default || 1
++  })
++  const [saving, setSaving] = useState(false)
++
++  const handleSave = async () => {
++    if (!form.nombre) {
++      toast.error("El nombre del negocio es requerido")
++      return
++    }
++    setSaving(true)
++    const res = await updateWispSettingsAction(form)
++    if (res.success) {
++      toast.success("Configuración guardada correctamente")
++    } else {
++      toast.error("Error al guardar: " + res.error)
++    }
++    setSaving(false)
++  }
++
++  return (
++    <div className="bg-card border rounded-xl shadow-sm overflow-hidden">
++      {/* SECCIÓN 1: Información del negocio */}
++      <div className="p-6 border-b">
++        <h3 className="text-lg font-bold text-foreground mb-4">Información del Negocio</h3>
++        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
++          <div className="space-y-2">
++            <Label htmlFor="nombre">Nombre del Negocio *</Label>
++            <Input 
++              id="nombre" 
++              value={form.nombre} 
++              onChange={e => setForm(p => ({ ...p, nombre: e.target.value }))} 
++              placeholder="Ej. Bivenet Networks"
++            />
++          </div>
++          <div className="space-y-2">
++            <Label htmlFor="ciudad">Ciudad</Label>
++            <Input 
++              id="ciudad" 
++              value={form.ciudad} 
++              onChange={e => setForm(p => ({ ...p, ciudad: e.target.value }))} 
++              placeholder="Ej. Monterrey, NL"
++            />
++          </div>
++          <div className="space-y-2">
++            <Label htmlFor="telefono">Teléfono de Soporte</Label>
++            <Input 
++              id="telefono" 
++              value={form.telefono} 
++              onChange={e => setForm(p => ({ ...p, telefono: e.target.value }))} 
++              placeholder="Ej. 8112345678"
++            />
++          </div>
++          <div className="space-y-2">
++            <Label htmlFor="whatsapp">WhatsApp de Soporte</Label>
++            <Input 
++              id="whatsapp" 
++              value={form.whatsapp} 
++              onChange={e => setForm(p => ({ ...p, whatsapp: e.target.value }))} 
++              placeholder="Ej. 528112345678"
++            />
++            <p className="text-xs text-muted-foreground">Número con código de país, ej: 52XXXXXXXXXX</p>
++          </div>
++        </div>
++      </div>
++
++      {/* SECCIÓN 2: Identidad visual */}
++      <div className="p-6 border-b">
++        <h3 className="text-lg font-bold text-foreground mb-4">Identidad Visual</h3>
++        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
++          <div className="space-y-2">
++            <Label htmlFor="logo_url">URL del Logo</Label>
++            <Input 
++              id="logo_url" 
++              value={form.logo_url} 
++              onChange={e => setForm(p => ({ ...p, logo_url: e.target.value }))} 
++              placeholder="https://ejemplo.com/logo.png"
++            />
++            {form.logo_url && (
++              <div className="mt-4 p-4 border rounded-lg bg-muted/30 flex items-center justify-center">
++                <img src={form.logo_url} alt="Logo Preview" className="max-h-[120px] object-contain" onError={(e) => (e.currentTarget.style.display = 'none')} />
++              </div>
++            )}
++          </div>
++          <div className="space-y-2">
++            <Label htmlFor="email_contacto">Email de Contacto</Label>
++            <Input 
++              id="email_contacto" 
++              type="email"
++              value={form.email_contacto} 
++              onChange={e => setForm(p => ({ ...p, email_contacto: e.target.value }))} 
++              placeholder="contacto@empresa.com"
++            />
++          </div>
++        </div>
++      </div>
++
++      {/* SECCIÓN 3: Configuración regional */}
++      <div className="p-6">
++        <h3 className="text-lg font-bold text-foreground mb-4">Configuración Regional</h3>
++        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
++          <div className="space-y-2">
++            <Label htmlFor="timezone">Zona Horaria</Label>
++            <Select value={form.timezone} onValueChange={val => setForm(p => ({ ...p, timezone: val }))}>
++              <SelectTrigger id="timezone">
++                <SelectValue placeholder="Seleccionar zona horaria" />
++              </SelectTrigger>
++              <SelectContent>
++                <SelectItem value="America/Mexico_City">America/Mexico_City</SelectItem>
++                <SelectItem value="America/Monterrey">America/Monterrey</SelectItem>
++                <SelectItem value="America/Tijuana">America/Tijuana</SelectItem>
++                <SelectItem value="America/Bogota">America/Bogota</SelectItem>
++                <SelectItem value="America/Lima">America/Lima</SelectItem>
++                <SelectItem value="America/Santiago">America/Santiago</SelectItem>
++                <SelectItem value="America/Argentina/Buenos_Aires">America/Argentina/Buenos_Aires</SelectItem>
++                <SelectItem value="America/Caracas">America/Caracas</SelectItem>
++                <SelectItem value="America/Guatemala">America/Guatemala</SelectItem>
++                <SelectItem value="America/El_Salvador">America/El_Salvador</SelectItem>
++                <SelectItem value="America/Tegucigalpa">America/Tegucigalpa</SelectItem>
++                <SelectItem value="America/Managua">America/Managua</SelectItem>
++                <SelectItem value="America/Costa_Rica">America/Costa_Rica</SelectItem>
++                <SelectItem value="America/Panama">America/Panama</SelectItem>
++              </SelectContent>
++            </Select>
++          </div>
++          <div className="space-y-2">
++            <Label htmlFor="billing_day_default">Día de Facturación por Defecto</Label>
++            <Input 
++              id="billing_day_default" 
++              type="number"
++              min={1} max={28}
++              value={form.billing_day_default} 
++              onChange={e => setForm(p => ({ ...p, billing_day_default: parseInt(e.target.value) || 1 }))} 
++            />
++            <p className="text-xs text-muted-foreground">Día del mes en que se genera la factura mensual</p>
++          </div>
++        </div>
++
++        <div className="mt-8 flex justify-end">
++          <Button onClick={handleSave} disabled={saving} className="bg-blue-600 hover:bg-blue-700 min-w-[150px]">
++            {saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Save className="h-4 w-4 mr-2" />}
++            Guardar Cambios
++          </Button>
++        </div>
++      </div>
++    </div>
++  )
++}
+diff --git a/app/dashboard/configuracion/page.tsx b/app/dashboard/configuracion/page.tsx
+new file mode 100644
+index 0000000..c8d61d6
+--- /dev/null
++++ b/app/dashboard/configuracion/page.tsx
+@@ -0,0 +1,34 @@
++import { getWispSettingsAction } from "@/app/actions/settings"
++import { Settings } from "lucide-react"
++import ConfiguracionClient from "./ConfiguracionClient"
++
++export default async function ConfiguracionPage() {
++  const res = await getWispSettingsAction()
++  
++  if (!res.success) {
++    return (
++      <div className="p-6">
++        <h1 className="text-2xl font-bold flex items-center gap-2 mb-6 text-foreground">
++          <Settings className="h-6 w-6 text-slate-500" />
++          Configuración del WISP
++        </h1>
++        <div className="bg-red-50 text-red-600 p-4 rounded-lg border border-red-200">
++          Error al cargar configuración: {res.error}
++        </div>
++      </div>
++    )
++  }
++
++  return (
++    <div className="p-4 sm:p-6 lg:p-8 max-w-4xl mx-auto w-full">
++      <h1 className="text-2xl font-bold flex items-center gap-2 mb-6 sm:mb-8 text-foreground">
++        <div className="p-2 bg-slate-100 rounded-lg text-slate-600">
++          <Settings className="h-6 w-6" />
++        </div>
++        Configuración del WISP
++      </h1>
++      
++      <ConfiguracionClient initialData={res.data} />
++    </div>
++  )
++}
