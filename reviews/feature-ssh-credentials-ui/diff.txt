@@ -1,0 +1,433 @@
+diff --git a/app/actions/settings.ts b/app/actions/settings.ts
+index 6e02b35..2b28479 100644
+--- a/app/actions/settings.ts
++++ b/app/actions/settings.ts
+@@ -87,3 +87,113 @@ export async function updateWispSettingsAction(settings: {
+     return { success: false, error: error.message }
+   }
+ }
++
++// ──────────────────────────────────────────────────
++// Obtiene las credenciales SSH del store del WISP
++// ──────────────────────────────────────────────────
++export async function getSshCredentialsAction() {
++  try {
++    const supabase = await createClient()
++    const { data: { user } } = await supabase.auth.getUser()
++    if (!user) throw new Error('No autenticado')
++
++    const { data: dbUser } = await supabase
++      .from('users').select('wisp_id').eq('id', user.id).single()
++    if (!dbUser?.wisp_id) throw new Error('WISP no encontrado')
++
++    const { data, error } = await supabase
++      .from('wisp_ssh_credentials')
++      .select('id, label, ssh_user, ssh_pass, device_type, priority, success_count, fail_count, last_used_at')
++      .eq('wisp_id', dbUser.wisp_id)
++      .order('priority', { ascending: true })
++
++    if (error) throw error
++    return { success: true, data: data || [] }
++  } catch (error: any) {
++    return { success: false, error: error.message }
++  }
++}
++
++// ──────────────────────────────────────────────────
++// Crea o actualiza una credencial SSH
++// ──────────────────────────────────────────────────
++export async function upsertSshCredentialAction(cred: {
++  id?: string
++  label: string
++  ssh_user: string
++  ssh_pass: string
++  device_type: string
++  priority: number
++}) {
++  try {
++    const supabase = await createClient()
++    const { data: { user } } = await supabase.auth.getUser()
++    if (!user) throw new Error('No autenticado')
++
++    const { data: dbUser } = await supabase
++      .from('users').select('wisp_id').eq('id', user.id).single()
++    if (!dbUser?.wisp_id) throw new Error('WISP no encontrado')
++
++    if (cred.id) {
++      // Actualizar existente
++      const { error } = await supabase
++        .from('wisp_ssh_credentials')
++        .update({
++          label: cred.label,
++          ssh_user: cred.ssh_user,
++          ssh_pass: cred.ssh_pass,
++          device_type: cred.device_type,
++          priority: cred.priority,
++          updated_at: new Date().toISOString()
++        })
++        .eq('id', cred.id)
++        .eq('wisp_id', dbUser.wisp_id)
++      if (error) throw error
++    } else {
++      // Crear nueva
++      const { error } = await supabase
++        .from('wisp_ssh_credentials')
++        .insert({
++          wisp_id: dbUser.wisp_id,
++          label: cred.label,
++          ssh_user: cred.ssh_user,
++          ssh_pass: cred.ssh_pass,
++          device_type: cred.device_type,
++          priority: cred.priority
++        })
++      if (error) throw error
++    }
++
++    revalidatePath('/dashboard/configuracion')
++    return { success: true }
++  } catch (error: any) {
++    return { success: false, error: error.message }
++  }
++}
++
++// ──────────────────────────────────────────────────
++// Elimina una credencial SSH
++// ──────────────────────────────────────────────────
++export async function deleteSshCredentialAction(credId: string) {
++  try {
++    const supabase = await createClient()
++    const { data: { user } } = await supabase.auth.getUser()
++    if (!user) throw new Error('No autenticado')
++
++    const { data: dbUser } = await supabase
++      .from('users').select('wisp_id').eq('id', user.id).single()
++    if (!dbUser?.wisp_id) throw new Error('WISP no encontrado')
++
++    const { error } = await supabase
++      .from('wisp_ssh_credentials')
++      .delete()
++      .eq('id', credId)
++      .eq('wisp_id', dbUser.wisp_id)
++
++    if (error) throw error
++    revalidatePath('/dashboard/configuracion')
++    return { success: true }
++  } catch (error: any) {
++    return { success: false, error: error.message }
++  }
++}
+diff --git a/app/dashboard/configuracion/ConfiguracionClient.tsx b/app/dashboard/configuracion/ConfiguracionClient.tsx
+index ebfe0ef..ff248e8 100644
+--- a/app/dashboard/configuracion/ConfiguracionClient.tsx
++++ b/app/dashboard/configuracion/ConfiguracionClient.tsx
+@@ -1,15 +1,21 @@
+ 'use client'
+ 
+ import { useState } from "react"
+-import { updateWispSettingsAction } from "@/app/actions/settings"
+-import { toast } from "sonner"
+-import { Save, Loader2 } from "lucide-react"
++import { getSshCredentialsAction, upsertSshCredentialAction, deleteSshCredentialAction } from "@/app/actions/settings"
++import { Eye, EyeOff, Plus, Trash2, Shield, ChevronUp, ChevronDown, Save, Loader2 } from "lucide-react"
+ import { Input } from "@/components/ui/input"
+ import { Label } from "@/components/ui/label"
+ import { Button } from "@/components/ui/button"
+ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
++import { Textarea } from "@/components/ui/textarea"
+ 
+-export default function ConfiguracionClient({ initialData }: { initialData: any }) {
++export default function ConfiguracionClient({
++  initialData,
++  initialSshCredentials
++}: {
++  initialData: any
++  initialSshCredentials: any[]
++}) {
+   const [form, setForm] = useState({
+     nombre: initialData?.nombre || "",
+     ciudad: initialData?.ciudad || "",
+@@ -22,6 +28,67 @@ export default function ConfiguracionClient({ initialData }: { initialData: any
+   })
+   const [saving, setSaving] = useState(false)
+ 
++  const [creds, setCreds] = useState<any[]>(initialSshCredentials)
++  const [newCred, setNewCred] = useState({
++    label: '',
++    ssh_user: 'ubnt',
++    ssh_pass: '',
++    device_type: 'all',
++    priority: 0
++  })
++  const [savingCred, setSavingCred] = useState(false)
++  const [showPassMap, setShowPassMap] = useState<Record<string, boolean>>({})
++  const [showNewPass, setShowNewPass] = useState(false)
++
++  const reloadCreds = async () => {
++    const res = await getSshCredentialsAction()
++    if (res.success) setCreds(res.data)
++  }
++
++  const handleAddCred = async () => {
++    if (!newCred.label || !newCred.ssh_user || !newCred.ssh_pass) {
++      toast.error('Label, usuario y contraseña son requeridos')
++      return
++    }
++    setSavingCred(true)
++    const nextPriority = creds.length > 0
++      ? Math.max(...creds.map(c => c.priority)) + 1
++      : 0
++    const res = await upsertSshCredentialAction({ ...newCred, priority: nextPriority })
++    if (res.success) {
++      setNewCred({ label: '', ssh_user: 'ubnt', ssh_pass: '', device_type: 'all', priority: 0 })
++      setShowNewPass(false)
++      toast.success('Credencial agregada')
++      await reloadCreds()
++    } else {
++      toast.error('Error: ' + res.error)
++    }
++    setSavingCred(false)
++  }
++
++  const handleDeleteCred = async (credId: string) => {
++    const res = await deleteSshCredentialAction(credId)
++    if (res.success) {
++      toast.success('Credencial eliminada')
++      await reloadCreds()
++    } else {
++      toast.error('Error: ' + res.error)
++    }
++  }
++
++  const handleMovePriority = async (cred: any, direction: 'up' | 'down') => {
++    const sorted = [...creds].sort((a, b) => a.priority - b.priority)
++    const idx = sorted.findIndex(c => c.id === cred.id)
++    const swapIdx = direction === 'up' ? idx - 1 : idx + 1
++    if (swapIdx < 0 || swapIdx >= sorted.length) return
++
++    const swapCred = sorted[swapIdx]
++    const tempPriority = cred.priority
++
++    await upsertSshCredentialAction({ ...cred, priority: swapCred.priority })
++    await upsertSshCredentialAction({ ...swapCred, priority: tempPriority })
++    await reloadCreds()
++  }
+   const handleSave = async () => {
+     if (!form.nombre) {
+       toast.error("El nombre del negocio es requerido")
+@@ -162,6 +229,176 @@ export default function ConfiguracionClient({ initialData }: { initialData: any
+           </Button>
+         </div>
+       </div>
++    {/* SECCIÓN 4: Credenciales SSH */}
++    <div className="p-6 border-t">
++      <div className="flex items-center gap-3 mb-2">
++        <Shield className="h-5 w-5 text-slate-500" />
++        <h3 className="text-lg font-bold text-foreground">
++          Credenciales SSH de Antenas
++        </h3>
++      </div>
++      <p className="text-sm text-muted-foreground mb-6">
++        El sistema prueba estas credenciales en orden cuando necesita conectarse
++        a una antena. Al encontrar la correcta, la guarda en el equipo para
++        no repetir el proceso. La contraseña específica del equipo siempre
++        tiene prioridad sobre este listado.
++      </p>
++
++      {/* Lista de credenciales existentes */}
++      <div className="space-y-2 mb-6">
++        {creds.length === 0 && (
++          <div className="text-center p-6 border border-dashed rounded-xl text-muted-foreground text-sm">
++            Sin credenciales configuradas. El sistema usará ubnt/ubnt por defecto.
++          </div>
++        )}
++        {[...creds].sort((a, b) => a.priority - b.priority).map((cred, idx) => (
++          <div key={cred.id} className="flex items-center gap-3 p-3 border rounded-lg bg-muted/20">
++            {/* Orden */}
++            <div className="flex flex-col gap-0.5">
++              <button
++                onClick={() => handleMovePriority(cred, 'up')}
++                disabled={idx === 0}
++                className="p-0.5 hover:bg-muted rounded disabled:opacity-30"
++              >
++                <ChevronUp className="h-3 w-3" />
++              </button>
++              <span className="text-xs text-center font-mono text-muted-foreground">
++                {idx + 1}
++              </span>
++              <button
++                onClick={() => handleMovePriority(cred, 'down')}
++                disabled={idx === creds.length - 1}
++                className="p-0.5 hover:bg-muted rounded disabled:opacity-30"
++              >
++                <ChevronDown className="h-3 w-3" />
++              </button>
++            </div>
++
++            {/* Info */}
++            <div className="flex-1 grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
++              <div>
++                <p className="text-xs text-muted-foreground">Etiqueta</p>
++                <p className="font-medium">{cred.label}</p>
++              </div>
++              <div>
++                <p className="text-xs text-muted-foreground">Usuario</p>
++                <p className="font-mono">{cred.ssh_user}</p>
++              </div>
++              <div>
++                <p className="text-xs text-muted-foreground">Contraseña</p>
++                <div className="flex items-center gap-1">
++                  <p className="font-mono">
++                    {showPassMap[cred.id] ? cred.ssh_pass : '••••••••'}
++                  </p>
++                  <button
++                    onClick={() => setShowPassMap(p => ({ ...p, [cred.id]: !p[cred.id] }))}
++                    className="p-0.5 hover:bg-muted rounded text-muted-foreground"
++                  >
++                    {showPassMap[cred.id]
++                      ? <EyeOff className="h-3 w-3" />
++                      : <Eye className="h-3 w-3" />}
++                  </button>
++                </div>
++              </div>
++              <div>
++                <p className="text-xs text-muted-foreground">Tipo</p>
++                <p className="text-xs">
++                  {cred.device_type === 'all' ? 'Todos' :
++                   cred.device_type === 'cpe' ? 'CPE Cliente' :
++                   cred.device_type === 'ap' ? 'Sectorial AP' : 'Enlace PTP'}
++                </p>
++              </div>
++            </div>
++
++            {/* Estadísticas */}
++            <div className="hidden md:flex flex-col items-center text-xs text-muted-foreground">
++              <span className="text-green-600 font-medium">✓ {cred.success_count}</span>
++              <span className="text-red-500 font-medium">✗ {cred.fail_count}</span>
++            </div>
++
++            {/* Eliminar */}
++            <button
++              onClick={() => handleDeleteCred(cred.id)}
++              className="p-1.5 hover:bg-red-50 hover:text-red-600 rounded text-muted-foreground transition-colors"
++            >
++              <Trash2 className="h-4 w-4" />
++            </button>
++          </div>
++        ))}
++      </div>
++
++      {/* Formulario agregar nueva */}
++      <div className="border rounded-xl p-4 bg-muted/10">
++        <p className="text-sm font-medium mb-3">Agregar credencial</p>
++        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
++          <div className="space-y-1">
++            <Label className="text-xs">Etiqueta *</Label>
++            <Input
++              placeholder="Ej: Ubiquiti 2024"
++              value={newCred.label}
++              onChange={e => setNewCred(p => ({ ...p, label: e.target.value }))}
++            />
++          </div>
++          <div className="space-y-1">
++            <Label className="text-xs">Usuario *</Label>
++            <Input
++              placeholder="ubnt"
++              value={newCred.ssh_user}
++              onChange={e => setNewCred(p => ({ ...p, ssh_user: e.target.value }))}
++            />
++          </div>
++          <div className="space-y-1">
++            <Label className="text-xs">Contraseña *</Label>
++            <div className="relative">
++              <Input
++                type={showNewPass ? 'text' : 'password'}
++                placeholder="••••••••"
++                value={newCred.ssh_pass}
++                onChange={e => setNewCred(p => ({ ...p, ssh_pass: e.target.value }))}
++              />
++              <button
++                type="button"
++                onClick={() => setShowNewPass(p => !p)}
++                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground"
++              >
++                {showNewPass ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
++              </button>
++            </div>
++          </div>
++          <div className="space-y-1">
++            <Label className="text-xs">Tipo de dispositivo</Label>
++            <Select
++              value={newCred.device_type}
++              onValueChange={val => setNewCred(p => ({ ...p, device_type: val }))}
++            >
++              <SelectTrigger>
++                <SelectValue />
++              </SelectTrigger>
++              <SelectContent>
++                <SelectItem value="all">Todos</SelectItem>
++                <SelectItem value="cpe">CPE Cliente</SelectItem>
++                <SelectItem value="ap">Sectorial AP</SelectItem>
++                <SelectItem value="ptp">Enlace PTP</SelectItem>
++              </SelectContent>
++            </Select>
++          </div>
++        </div>
++        <div className="mt-3 flex justify-end">
++          <Button
++            onClick={handleAddCred}
++            disabled={savingCred || !newCred.label || !newCred.ssh_user || !newCred.ssh_pass}
++            size="sm"
++            className="bg-blue-600 hover:bg-blue-700"
++          >
++            {savingCred
++              ? <Loader2 className="h-4 w-4 mr-2 animate-spin" />
++              : <Plus className="h-4 w-4 mr-2" />}
++            Agregar
++          </Button>
++        </div>
++      </div>
++    </div>
++
+     </div>
+   )
+ }
+diff --git a/app/dashboard/configuracion/page.tsx b/app/dashboard/configuracion/page.tsx
+index c8d61d6..690bfb4 100644
+--- a/app/dashboard/configuracion/page.tsx
++++ b/app/dashboard/configuracion/page.tsx
+@@ -1,9 +1,10 @@
+-import { getWispSettingsAction } from "@/app/actions/settings"
++import { getWispSettingsAction, getSshCredentialsAction } from "@/app/actions/settings"
+ import { Settings } from "lucide-react"
+ import ConfiguracionClient from "./ConfiguracionClient"
+ 
+ export default async function ConfiguracionPage() {
+   const res = await getWispSettingsAction()
++  const sshRes = await getSshCredentialsAction()
+   
+   if (!res.success) {
+     return (
+@@ -28,7 +29,10 @@ export default async function ConfiguracionPage() {
+         Configuración del WISP
+       </h1>
+       
+-      <ConfiguracionClient initialData={res.data} />
++      <ConfiguracionClient 
++        initialData={res.data} 
++        initialSshCredentials={sshRes.data || []}
++      />
+     </div>
+   )
+ }
+diff --git a/next-env.d.ts b/next-env.d.ts
+index c4b7818..9edff1c 100644
+--- a/next-env.d.ts
++++ b/next-env.d.ts
+@@ -1,6 +1,6 @@
+ /// <reference types="next" />
+ /// <reference types="next/image-types/global" />
+-import "./.next/dev/types/routes.d.ts";
++import "./.next/types/routes.d.ts";
+ 
+ // NOTE: This file should not be edited
+ // see https://nextjs.org/docs/app/api-reference/config/typescript for more information.
