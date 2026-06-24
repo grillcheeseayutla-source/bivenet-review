@@ -20,9 +20,9 @@ origin/tarea/feature-tickets-soporte
 ## Diff stat
 
 ```
-app/actions/tickets.ts                             | 116 +++++++++++++++++++++
- components/dashboard/isp-client-details-dialog.tsx |  43 ++++++++
- 2 files changed, 159 insertions(+)
+app/actions/tickets.ts                             | 116 ++++++++++++++
+ components/dashboard/isp-client-details-dialog.tsx | 173 +++++++++++++++++++--
+ 2 files changed, 275 insertions(+), 14 deletions(-)
 ```
 
 ## Impacto detectado

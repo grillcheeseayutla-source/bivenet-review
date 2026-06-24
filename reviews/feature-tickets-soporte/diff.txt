@@ -121,7 +121,7 @@ index 0000000..289ff8c
 +  }
 +}
 diff --git a/components/dashboard/isp-client-details-dialog.tsx b/components/dashboard/isp-client-details-dialog.tsx
-index e4b3bec..00ef1f4 100644
+index e4b3bec..cac37e2 100644
 --- a/components/dashboard/isp-client-details-dialog.tsx
 +++ b/components/dashboard/isp-client-details-dialog.tsx
 @@ -13,6 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
@@ -188,3 +188,141 @@ index e4b3bec..00ef1f4 100644
    const handleRegisterPayment = async () => {
      if (!paymentForm.amount || Number(paymentForm.amount) <= 0) return
      setSavingPayment(true)
+@@ -711,21 +754,123 @@ export function IspClientDetailsDialog({ client, open, onOpenChange, routers = [
+                 </div>
+               </TabsContent>
+ 
+-              <TabsContent value="tickets" className="mt-0 h-full flex flex-col min-h-[400px]">
+-                <div className="flex justify-between items-center mb-6">
+-                  <h3 className="text-xl font-bold text-foreground">Tickets de Soporte</h3>
+-                  <Button className="bg-blue-600 hover:bg-blue-700">
+-                    <Ticket className="h-4 w-4 mr-2" /> Abrir Nuevo Ticket
+-                  </Button>
+-                </div>
+-                <div className="flex-1 flex items-center justify-center border border-dashed rounded-xl bg-card">
+-                  <div className="text-center p-8">
+-                    <div className="w-16 h-16 bg-muted rounded-full flex items-center justify-center mx-auto mb-4">
+-                      <Activity className="h-8 w-8 text-slate-400" />
++                    <TabsContent value="tickets" className="mt-0 h-full flex flex-col focus-visible:outline-none focus-visible:ring-0">
++                <div className="p-4 sm:p-6 grid grid-cols-1 lg:grid-cols-3 gap-6 h-full overflow-y-auto">
++                  {/* Formulario de Ticket */}
++                  <div className="bg-card p-5 rounded-xl border shadow-sm h-max">
++                    <h3 className="font-bold text-lg mb-4 text-foreground flex items-center gap-2">
++                      <Ticket className="h-5 w-5 text-blue-500" /> Nuevo Ticket
++                    </h3>
++                    <div className="space-y-4">
++                      <div className="space-y-2">
++                        <Label>Título *</Label>
++                        <Input
++                          value={ticketForm.title}
++                          onChange={e => setTicketForm(p => ({ ...p, title: e.target.value }))}
++                          placeholder="Ej. Sin señal en el equipo"
++                        />
++                      </div>
++                      <div className="space-y-2">
++                        <Label>Descripción</Label>
++                        <Textarea
++                          value={ticketForm.description}
++                          onChange={e => setTicketForm(p => ({ ...p, description: e.target.value }))}
++                          placeholder="Detalle del problema..."
++                          className="resize-none h-24"
++                        />
++                      </div>
++                      <div className="space-y-2">
++                        <Label>Prioridad</Label>
++                        <Select
++                          value={ticketForm.priority}
++                          onValueChange={val => setTicketForm(p => ({ ...p, priority: val }))}
++                        >
++                          <SelectTrigger>
++                            <SelectValue />
++                          </SelectTrigger>
++                          <SelectContent>
++                            <SelectItem value="low">Baja</SelectItem>
++                            <SelectItem value="medium">Media</SelectItem>
++                            <SelectItem value="high">Alta</SelectItem>
++                          </SelectContent>
++                        </Select>
++                      </div>
++                      <Button
++                        className="w-full bg-blue-600 hover:bg-blue-700"
++                        onClick={handleCreateTicket}
++                        disabled={savingTicket || !ticketForm.title.trim()}
++                      >
++                        {savingTicket ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}
++                        Crear Ticket
++                      </Button>
++                    </div>
++                  </div>
++
++                  {/* Historial de Tickets */}
++                  <div className="lg:col-span-2 bg-card p-5 rounded-xl border shadow-sm">
++                    <h3 className="font-bold text-lg mb-4 text-foreground flex items-center gap-2">
++                      <History className="h-5 w-5 text-blue-500" /> Historial de Tickets
++                    </h3>
++                    <div className="space-y-4">
++                      {loadingTickets ? (
++                        <div className="space-y-3">
++                          {[1, 2, 3].map(i => (
++                            <div key={i} className="animate-pulse bg-muted h-24 rounded-lg"></div>
++                          ))}
++                        </div>
++                      ) : tickets.length === 0 ? (
++                        <div className="text-center p-8 border border-dashed rounded-xl">
++                          <p className="text-muted-foreground text-sm">Sin tickets registrados</p>
++                        </div>
++                      ) : (
++                        <div className="space-y-3">
++                          {tickets.map(ticket => (
++                            <div key={ticket.id} className="p-4 border rounded-lg hover:bg-muted/30 transition-colors">
++                              <div className="flex justify-between items-start mb-2">
++                                <div className="flex flex-col">
++                                  <span className="font-bold text-lg">{ticket.title}</span>
++                                  <span className="text-xs text-muted-foreground">
++                                    {new Date(ticket.created_at).toLocaleString('es-ES', { dateStyle: 'medium', timeStyle: 'short' })}
++                                  </span>
++                                </div>
++                                <div className="flex gap-2">
++                                  <Badge variant="outline" className={
++                                    ticket.priority === 'low' ? 'border-green-200 text-green-700 bg-green-50' :
++                                    ticket.priority === 'medium' ? 'border-orange-200 text-orange-700 bg-orange-50' :
++                                    'border-red-200 text-red-700 bg-red-50'
++                                  }>
++                                    {ticket.priority === 'low' ? 'Baja' : ticket.priority === 'medium' ? 'Media' : 'Alta'}
++                                  </Badge>
++                                </div>
++                              </div>
++                              {ticket.description && (
++                                <p className="text-sm text-muted-foreground mt-2 mb-3">{ticket.description}</p>
++                              )}
++                              <div className="mt-3 pt-3 border-t flex items-center gap-2">
++                                <span className="text-xs font-medium text-muted-foreground">Estado:</span>
++                                {ticket.status === 'closed' ? (
++                                  <Badge className="bg-slate-100 text-slate-700 hover:bg-slate-200 shadow-none">Cerrado</Badge>
++                                ) : (
++                                  <Select
++                                    defaultValue={ticket.status}
++                                    onValueChange={val => handleUpdateStatus(ticket.id, val)}
++                                  >
++                                    <SelectTrigger className="h-7 text-xs w-[130px]">
++                                      <SelectValue />
++                                    </SelectTrigger>
++                                    <SelectContent>
++                                      <SelectItem value="open">Abierto</SelectItem>
++                                      <SelectItem value="in_progress">En Proceso</SelectItem>
++                                      <SelectItem value="closed">Cerrado</SelectItem>
++                                    </SelectContent>
++                                  </Select>
++                                )}
++                              </div>
++                            </div>
++                          ))}
++                        </div>
++                      )}
+                     </div>
+-                    <p className="text-muted-foreground text-sm max-w-sm mx-auto">
+-                      No hay incidentes de soporte registrados para este cliente.
+-                    </p>
+                   </div>
+                 </div>
+               </TabsContent>
